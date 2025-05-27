@@ -20,20 +20,42 @@ import {
   DialogContent,
   DialogActions,
   IconButton,
-  Divider
+  Divider,
+  TextField,
+  InputAdornment,
+  DialogContentText,
+  Card,
+  CardContent
 } from '@mui/material';
 import AddIcon from '@mui/icons-material/Add';
 import VisibilityIcon from '@mui/icons-material/Visibility';
 import EditIcon from '@mui/icons-material/Edit';
 import CloudSyncIcon from '@mui/icons-material/CloudSync';
+import FileCopyIcon from '@mui/icons-material/FileCopy';
+import SearchIcon from '@mui/icons-material/Search';
+import DeleteIcon from '@mui/icons-material/Delete';
+import InsertDriveFileIcon from '@mui/icons-material/InsertDriveFile';
+import SchoolIcon from '@mui/icons-material/School';
+import RestaurantIcon from '@mui/icons-material/Restaurant';
 
 import ActivityForm from '../activities/ActivityForm';
 import activitiesService from '../../services/activitiesService';
 import localStorageService from '../../services/localStorageService';
 import syncService from '../../services/syncService';
 
+// IMPORTAR FUNCIONES DEL HELPERS.JS
+import { 
+  getActivityTypeLabel, 
+  getActivitySubtypeLabel, 
+  formatDate, 
+  formatSchedule,
+  formatLocationType
+} from '../dashboard/common/helpers';
+
 const ActivitiesPage = ({ user }) => {
   const [activities, setActivities] = useState([]);
+  const [filteredActivities, setFilteredActivities] = useState([]);
+  const [searchTerm, setSearchTerm] = useState('');
   const [lastVisible, setLastVisible] = useState(null);
   const [hasMore, setHasMore] = useState(true);
   const [loading, setLoading] = useState(false);
@@ -42,6 +64,9 @@ const ActivitiesPage = ({ user }) => {
   const [selectedActivity, setSelectedActivity] = useState(null);
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [offline, setOffline] = useState(!localStorageService.isOnline());
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [activityToDelete, setActivityToDelete] = useState(null);
+  const [deletingActivity, setDeletingActivity] = useState(false);
   const [snackbar, setSnackbar] = useState({
     open: false,
     message: '',
@@ -53,13 +78,9 @@ const ActivitiesPage = ({ user }) => {
   const [syncingActivities, setSyncingActivities] = useState(false);
 
   useEffect(() => {
-    // Cargar actividades al inicio y cuando cambie el tab
     loadActivities();
-    
-    // Comprobar actividades pendientes de sincronizar
     checkPendingActivities();
     
-    // Escuchar cambios en la conexión
     window.addEventListener('online', handleOnline);
     window.addEventListener('offline', handleOffline);
     
@@ -68,6 +89,22 @@ const ActivitiesPage = ({ user }) => {
       window.removeEventListener('offline', handleOffline);
     };
   }, [tabValue, user]);
+
+  // Efecto para filtrar actividades según la búsqueda
+  useEffect(() => {
+    if (searchTerm.trim() === '') {
+      setFilteredActivities(activities);
+    } else {
+      const lowercasedSearch = searchTerm.toLowerCase();
+      setFilteredActivities(
+        activities.filter(activity => 
+          (activity.location?.name && activity.location.name.toLowerCase().includes(lowercasedSearch)) ||
+          (getActivityDisplayLabel(activity).toLowerCase().includes(lowercasedSearch)) ||
+          (activity.educationalActivity?.description && activity.educationalActivity.description.toLowerCase().includes(lowercasedSearch))
+        )
+      );
+    }
+  }, [searchTerm, activities]);
 
   const handleOnline = () => {
     setOffline(false);
@@ -96,7 +133,6 @@ const ActivitiesPage = ({ user }) => {
   const loadActivities = async (loadMore = false) => {
     setLoading(true);
     try {
-      // Determinar el estado según la pestaña seleccionada
       let status = null;
       if (tabValue === 1) status = 'pending';
       else if (tabValue === 2) status = 'approved';
@@ -111,8 +147,10 @@ const ActivitiesPage = ({ user }) => {
       
       if (loadMore) {
         setActivities(prev => [...prev, ...response.activities]);
+        setFilteredActivities(prev => [...prev, ...response.activities]);
       } else {
         setActivities(response.activities);
+        setFilteredActivities(response.activities);
       }
       
       setLastVisible(response.lastVisible);
@@ -127,6 +165,32 @@ const ActivitiesPage = ({ user }) => {
     } finally {
       setLoading(false);
     }
+  };
+
+  // FUNCIÓN NUEVA PARA OBTENER ETIQUETA DE DISPLAY
+  const getActivityDisplayLabel = (activity) => {
+    if (!activity) return 'Actividad';
+    
+    let parts = [];
+    
+    // Si tiene actividad educativa
+    if (activity.educationalActivity?.included) {
+      const type = activity.educationalActivity.type;
+      const subtype = activity.educationalActivity.subtype;
+      parts.push(getActivitySubtypeLabel(type, subtype, activity.contractor));
+    }
+    
+    // Si tiene entrega de alimentos
+    if (activity.nutritionDelivery?.included) {
+      const locationType = activity.location?.type;
+      if (locationType === 'center') {
+        parts.push('+ Entrega de Raciones');
+      } else {
+        parts.push('+ Entrega de Meriendas');
+      }
+    }
+    
+    return parts.length > 0 ? parts.join(' ') : 'Actividad';
   };
 
   const handleTabChange = (event, newValue) => {
@@ -146,6 +210,7 @@ const ActivitiesPage = ({ user }) => {
   };
 
   const handleViewDetails = (activity) => {
+    console.log('Actividad seleccionada para ver detalles:', activity);
     setSelectedActivity(activity);
     setDetailsOpen(true);
   };
@@ -156,9 +221,67 @@ const ActivitiesPage = ({ user }) => {
   };
 
   const handleEditRejected = (activity) => {
-    // Preparar datos para editar
     setSelectedActivity(activity);
     setFormVisible(true);
+  };
+
+  const handleDuplicateActivity = (activity) => {
+    const duplicatedActivity = {
+      ...activity,
+      date: new Date().toISOString().split('T')[0],
+      status: undefined,
+      approvedBy: undefined,
+      approvedAt: undefined,
+      rejectionReason: undefined,
+      createdAt: undefined,
+      id: undefined,
+    };
+    
+    setSelectedActivity(duplicatedActivity);
+    setFormVisible(true);
+    
+    setSnackbar({
+      open: true,
+      message: 'Se ha creado un borrador basado en la actividad seleccionada. Modifique los datos necesarios y guarde.',
+      severity: 'info'
+    });
+  };
+
+  const handleConfirmDelete = (activity) => {
+    setActivityToDelete(activity);
+    setDeleteDialogOpen(true);
+  };
+
+  const handleDeleteActivity = async () => {
+    if (!activityToDelete || !activityToDelete.id) {
+      setDeleteDialogOpen(false);
+      return;
+    }
+
+    setDeletingActivity(true);
+    try {
+      await activitiesService.deleteActivity(activityToDelete.id);
+      
+      setActivities(activities.filter(a => a.id !== activityToDelete.id));
+      setFilteredActivities(filteredActivities.filter(a => a.id !== activityToDelete.id));
+      
+      setSnackbar({
+        open: true,
+        message: 'Actividad eliminada correctamente',
+        severity: 'success'
+      });
+    } catch (error) {
+      console.error('Error al eliminar actividad:', error);
+      setSnackbar({
+        open: true,
+        message: 'Error al eliminar la actividad. Inténtelo de nuevo.',
+        severity: 'error'
+      });
+    } finally {
+      setDeletingActivity(false);
+      setDeleteDialogOpen(false);
+      setActivityToDelete(null);
+    }
   };
 
   const handleSyncActivities = async () => {
@@ -176,7 +299,6 @@ const ActivitiesPage = ({ user }) => {
           severity: 'success'
         });
         
-        // Recargar actividades para reflejar los cambios
         loadActivities();
       } else {
         setSnackbar({
@@ -201,46 +323,6 @@ const ActivitiesPage = ({ user }) => {
     setSnackbar(prev => ({ ...prev, open: false }));
   };
 
-  const getActivityTypeLabel = (type, contractor) => {
-    if (type === 'nutrition') {
-      return contractor === 'CUC' ? 'Educación Nutricional' : 'Salud Nutricional';
-    } else if (type === 'physical') {
-      return contractor === 'CUC' ? 'Educación en Salud Física' : 'Salud Física';
-    } else if (type === 'psychosocial') {
-      return contractor === 'CUC' ? 'Educación Psicosocial' : 'Salud Psicosocial';
-    }
-    return type;
-  };
-
-  const getActivitySubtypeLabel = (type, subtype, contractor) => {
-    const subtypeMap = {
-      nutrition: {
-        workshop: contractor === 'CUC' ? 'Taller educativo del cuidado nutricional' : 'Jornada de promoción de la salud nutricional',
-        ration: 'Raciones alimenticias/meriendas'
-      },
-      physical: {
-        prevention: 'Charlas de prevención de enfermedad',
-        therapeutic: 'Actividad física terapéutica',
-        rumba: 'Rumbaterapia y ejercicios dirigidos',
-        walking: 'Club de caminantes'
-      },
-      psychosocial: {
-        mental: 'Jornadas/talleres en salud mental',
-        cognitive: 'Jornadas/talleres cognitivos',
-        abuse: 'Talleres en prevención al maltrato',
-        arts: 'Talleres en artes y oficios',
-        intergenerational: 'Encuentros intergeneracionales'
-      }
-    };
-
-    return subtypeMap[type] && subtypeMap[type][subtype] ? subtypeMap[type][subtype] : subtype;
-  };
-
-  const formatDate = (dateString) => {
-    const options = { year: 'numeric', month: 'long', day: 'numeric' };
-    return new Date(dateString).toLocaleDateString('es-ES', options);
-  };
-
   const getStatusChip = (status) => {
     if (status === 'pending') {
       return <Chip size="small" label="Pendiente" color="warning" />;
@@ -252,6 +334,10 @@ const ActivitiesPage = ({ user }) => {
       return <Chip size="small" label="Sin sincronizar" color="default" />;
     }
     return null;
+  };
+
+  const getTotalBeneficiaries = (activity) => {
+    return activity.totalBeneficiaries || activity.beneficiaries || 0;
   };
 
   return (
@@ -322,14 +408,32 @@ const ActivitiesPage = ({ user }) => {
               </Tabs>
             </Paper>
 
+            <TextField
+              fullWidth
+              variant="outlined"
+              placeholder="Buscar actividades por nombre, tipo o ubicación..."
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              InputProps={{
+                startAdornment: (
+                  <InputAdornment position="start">
+                    <SearchIcon />
+                  </InputAdornment>
+                ),
+              }}
+              sx={{ mb: 3 }}
+            />
+
             {loading && activities.length === 0 ? (
               <Box sx={{ display: 'flex', justifyContent: 'center', p: 4 }}>
                 <CircularProgress />
               </Box>
-            ) : activities.length === 0 ? (
+            ) : filteredActivities.length === 0 ? (
               <Paper sx={{ p: 4, textAlign: 'center' }}>
                 <Typography variant="body1" color="text.secondary">
-                  No hay actividades registradas en esta categoría.
+                  {searchTerm 
+                    ? 'No se encontraron actividades con el término de búsqueda.' 
+                    : 'No hay actividades registradas en esta categoría.'}
                 </Typography>
                 <Button
                   variant="contained"
@@ -343,8 +447,8 @@ const ActivitiesPage = ({ user }) => {
             ) : (
               <Paper elevation={2}>
                 <List>
-                  {activities.map((activity, index) => (
-                    <React.Fragment key={activity.id}>
+                  {filteredActivities.map((activity, index) => (
+                    <React.Fragment key={activity.id || index}>
                       <ListItem
                         secondaryAction={
                           <Box>
@@ -352,17 +456,42 @@ const ActivitiesPage = ({ user }) => {
                               edge="end" 
                               onClick={() => handleViewDetails(activity)}
                               size="small"
+                              title="Ver detalles"
                             >
                               <VisibilityIcon />
                             </IconButton>
+                            <IconButton 
+                              edge="end" 
+                              onClick={() => handleDuplicateActivity(activity)}
+                              size="small"
+                              sx={{ ml: 1 }}
+                              title="Duplicar actividad"
+                            >
+                              <FileCopyIcon />
+                            </IconButton>
+                            
                             {activity.status === 'rejected' && (
                               <IconButton 
                                 edge="end" 
                                 onClick={() => handleEditRejected(activity)}
                                 size="small"
                                 sx={{ ml: 1 }}
+                                title="Editar y reenviar"
                               >
                                 <EditIcon />
+                              </IconButton>
+                            )}
+                            
+                            {activity.status === 'pending' && (
+                              <IconButton 
+                                edge="end" 
+                                onClick={() => handleConfirmDelete(activity)}
+                                size="small"
+                                sx={{ ml: 1 }}
+                                title="Eliminar actividad"
+                                color="error"
+                              >
+                                <DeleteIcon />
                               </IconButton>
                             )}
                           </Box>
@@ -372,7 +501,7 @@ const ActivitiesPage = ({ user }) => {
                           primary={
                             <Box sx={{ display: 'flex', alignItems: 'center' }}>
                               <Typography variant="subtitle1">
-                                {getActivitySubtypeLabel(activity.type, activity.subtype, activity.contractor)}
+                                {getActivityDisplayLabel(activity)}
                               </Typography>
                               <Box sx={{ ml: 1 }}>
                                 {getStatusChip(activity.status)}
@@ -385,8 +514,8 @@ const ActivitiesPage = ({ user }) => {
                                 {formatDate(activity.date)}
                               </Typography>
                               <Typography variant="body2" component="span" color="text.secondary">
-                                {' - '}{activity.location.name}
-                                {', '}{activity.beneficiaries} beneficiarios
+                                {' - '}{activity.location?.name || 'Sin ubicación'}
+                                {', '}{getTotalBeneficiaries(activity)} beneficiarios
                               </Typography>
                               {activity.status === 'rejected' && activity.rejectionReason && (
                                 <Typography variant="body2" color="error" sx={{ mt: 0.5 }}>
@@ -397,7 +526,7 @@ const ActivitiesPage = ({ user }) => {
                           }
                         />
                       </ListItem>
-                      {index < activities.length - 1 && <Divider component="li" />}
+                      {index < filteredActivities.length - 1 && <Divider component="li" />}
                     </React.Fragment>
                   ))}
                 </List>
@@ -418,7 +547,7 @@ const ActivitiesPage = ({ user }) => {
         )}
       </Box>
 
-      {/* Dialog para ver detalles de actividad */}
+      {/* DIALOG CORREGIDO PARA VER DETALLES */}
       <Dialog
         open={detailsOpen}
         onClose={handleCloseDetails}
@@ -437,97 +566,198 @@ const ActivitiesPage = ({ user }) => {
             </DialogTitle>
             <DialogContent dividers>
               <Grid container spacing={3}>
-                <Grid item xs={12} md={6}>
-                  <Box sx={{ mb: 3 }}>
-                    <Typography variant="subtitle1" gutterBottom fontWeight="bold">
-                      {getActivitySubtypeLabel(selectedActivity.type, selectedActivity.subtype, selectedActivity.contractor)}
-                    </Typography>
-                    <Typography variant="body2">
-                      <strong>Tipo:</strong> {getActivityTypeLabel(selectedActivity.type, selectedActivity.contractor)}
-                    </Typography>
-                    <Typography variant="body2">
-                      <strong>Fecha:</strong> {formatDate(selectedActivity.date)}
-                    </Typography>
-                    <Typography variant="body2">
-                      <strong>Lugar:</strong> {selectedActivity.location.name} 
-                      ({selectedActivity.location.type === 'center' ? 'Centro de Vida' : 'Parque/Espacio'})
-                    </Typography>
-                    <Typography variant="body2">
-                      <strong>Jornada:</strong> {selectedActivity.schedule === 'morning' ? 'Mañana' : 'Tarde'}
-                    </Typography>
-                    <Typography variant="body2">
-                      <strong>Beneficiarios:</strong> {selectedActivity.beneficiarios || 0}
-                    </Typography>
-                    
-                    {selectedActivity.createdAt && (
-                      <Typography variant="body2">
-                        <strong>Fecha de registro:</strong> {formatDate(selectedActivity.createdAt.toDate())}
-                      </Typography>
-                    )}
-                    
-                    {selectedActivity.status === 'approved' && selectedActivity.approvedBy && (
-                      <>
-                        <Typography variant="body2">
-                          <strong>Aprobado por:</strong> {selectedActivity.approvedBy.name}
-                        </Typography>
-                        {selectedActivity.approvedAt && (
-                          <Typography variant="body2">
-                            <strong>Fecha de aprobación:</strong> {formatDate(selectedActivity.approvedAt.toDate())}
-                          </Typography>
-                        )}
-                      </>
-                    )}
-                    
-                    {selectedActivity.status === 'rejected' && (
-                      <>
-                        {selectedActivity.approvedBy && (
-                          <Typography variant="body2">
-                            <strong>Rechazado por:</strong> {selectedActivity.approvedBy.name}
-                          </Typography>
-                        )}
-                        {selectedActivity.rejectionReason && (
-                          <Box sx={{ mt: 1, p: 1, bgcolor: 'error.light', borderRadius: 1 }}>
-                            <Typography variant="body2" color="error.contrastText">
-                              <strong>Motivo del rechazo:</strong> {selectedActivity.rejectionReason}
-                            </Typography>
-                          </Box>
-                        )}
-                      </>
-                    )}
-                  </Box>
-                  
-                  <Typography variant="subtitle1" gutterBottom>
-                    Descripción
-                  </Typography>
-                  <Typography variant="body2" paragraph>
-                    {selectedActivity.description}
-                  </Typography>
-                </Grid>
                 
-                <Grid item xs={12} md={6}>
-                  <Typography variant="subtitle1" gutterBottom>
-                    Evidencia Fotográfica
-                  </Typography>
-                  <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-                    {selectedActivity.photos && selectedActivity.photos.map((photo, index) => (
-                      <Box 
-                        key={index} 
-                        component="img" 
-                        src={photo.url} 
-                        alt={`Foto de evidencia ${index + 1}`}
-                        sx={{ 
-                          width: '100%', 
-                          maxHeight: 300, 
-                          objectFit: 'contain',
-                          borderRadius: 1 
-                        }} 
-                      />
-                    ))}
-                  </Box>
+                {/* INFORMACIÓN BÁSICA */}
+                <Grid item xs={12}>
+                  <Card variant="outlined" sx={{ mb: 2 }}>
+                    <CardContent>
+                      <Typography variant="h6" gutterBottom color="primary">
+                        📋 Información General
+                      </Typography>
+                      
+                      <Grid container spacing={2}>
+                        <Grid item xs={12} md={6}>
+                          <Typography variant="body2">
+                            <strong>Fecha:</strong> {formatDate(selectedActivity.date)}
+                          </Typography>
+                        </Grid>
+                        <Grid item xs={12} md={6}>
+                          <Typography variant="body2">
+                            <strong>Contratista:</strong> {selectedActivity.contractor}
+                          </Typography>
+                        </Grid>
+                        <Grid item xs={12} md={6}>
+                          <Typography variant="body2">
+                            <strong>Lugar:</strong> {selectedActivity.location?.name || 'No especificado'}
+                          </Typography>
+                        </Grid>
+                        <Grid item xs={12} md={6}>
+                          <Typography variant="body2">
+                            <strong>Tipo de lugar:</strong> {formatLocationType(selectedActivity.location?.type)}
+                          </Typography>
+                        </Grid>
+                        <Grid item xs={12} md={6}>
+                          <Typography variant="body2">
+                            <strong>Jornada:</strong> {formatSchedule(selectedActivity.schedule)}
+                          </Typography>
+                        </Grid>
+                        <Grid item xs={12} md={6}>
+                          <Typography variant="body2">
+                            <strong>Total Beneficiarios:</strong> {getTotalBeneficiaries(selectedActivity)}
+                          </Typography>
+                        </Grid>
+                      </Grid>
+                    </CardContent>
+                  </Card>
+                </Grid>
+
+                {/* ACTIVIDAD EDUCATIVA */}
+                {selectedActivity.educationalActivity?.included && (
+                  <Grid item xs={12}>
+                    <Card variant="outlined" sx={{ mb: 2 }}>
+                      <CardContent>
+                        <Typography variant="h6" gutterBottom color="primary">
+                          <SchoolIcon sx={{ mr: 1, verticalAlign: 'middle' }} />
+                          Actividad Educativa
+                        </Typography>
+                        
+                        <Typography variant="body2" sx={{ mb: 1 }}>
+                          <strong>Tipo:</strong> {getActivityTypeLabel(selectedActivity.educationalActivity.type, selectedActivity.contractor)}
+                        </Typography>
+                        
+                        <Typography variant="body2" sx={{ mb: 1 }}>
+                          <strong>Actividad específica:</strong> {getActivitySubtypeLabel(selectedActivity.educationalActivity.type, selectedActivity.educationalActivity.subtype, selectedActivity.contractor)}
+                        </Typography>
+                        
+                        <Typography variant="body2" sx={{ mb: 2 }}>
+                          <strong>Descripción:</strong>
+                        </Typography>
+                        <Typography variant="body2" paragraph sx={{ bgcolor: 'grey.50', p: 2, borderRadius: 1 }}>
+                          {selectedActivity.educationalActivity.description || 'Sin descripción'}
+                        </Typography>
+                      </CardContent>
+                    </Card>
+                  </Grid>
+                )}
+
+                {/* ENTREGA DE ALIMENTOS */}
+                {selectedActivity.nutritionDelivery?.included && (
+                  <Grid item xs={12}>
+                    <Card variant="outlined" sx={{ mb: 2 }}>
+                      <CardContent>
+                        <Typography variant="h6" gutterBottom color="secondary">
+                          <RestaurantIcon sx={{ mr: 1, verticalAlign: 'middle' }} />
+                          Entrega de Alimentos
+                        </Typography>
+                        
+                        <Typography variant="body2" sx={{ mb: 1 }}>
+                          <strong>Tipo:</strong> {
+                            selectedActivity.nutritionDelivery.type === 'centerRation' 
+                              ? 'Raciones alimenticias (Centro de Vida)' 
+                              : selectedActivity.nutritionDelivery.type === 'parkSnack'
+                                ? 'Meriendas (Parque/Espacio Comunitario)'
+                                : selectedActivity.nutritionDelivery.type || 'Entrega de alimentos'
+                          }
+                        </Typography>
+                        
+                        <Typography variant="body2" sx={{ mb: 1 }}>
+                          <strong>Beneficiarios atendidos:</strong> {getTotalBeneficiaries(selectedActivity)}
+                        </Typography>
+                        
+                        {selectedActivity.nutritionDelivery.description && (
+                          <Typography variant="body2" paragraph sx={{ bgcolor: 'orange.50', p: 2, borderRadius: 1, mt: 2 }}>
+                            {selectedActivity.nutritionDelivery.description}
+                          </Typography>
+                        )}
+                      </CardContent>
+                    </Card>
+                  </Grid>
+                )}
+
+                {/* INFORMACIÓN DE ESTADO Y APROBACIÓN */}
+                <Grid item xs={12}>
+                  <Card variant="outlined">
+                    <CardContent>
+                      <Typography variant="h6" gutterBottom>
+                        Estado de la Actividad
+                      </Typography>
+                      
+                      <Typography variant="body2" sx={{ mb: 1 }}>
+                        <strong>Registrado por:</strong> {selectedActivity.createdBy?.name || 'Usuario desconocido'}
+                      </Typography>
+                      
+                      {selectedActivity.createdAt && (
+                        <Typography variant="body2" sx={{ mb: 1 }}>
+                          <strong>Fecha de registro:</strong> {
+                            typeof selectedActivity.createdAt === 'object' && typeof selectedActivity.createdAt.toDate === 'function'
+                              ? formatDate(selectedActivity.createdAt.toDate())
+                              : formatDate(selectedActivity.createdAt)
+                          }
+                        </Typography>
+                      )}
+                      
+                      {selectedActivity.status === 'approved' && selectedActivity.approvedBy && (
+                        <>
+                          <Typography variant="body2" sx={{ mb: 1 }}>
+                            <strong>Aprobado por:</strong> {selectedActivity.approvedBy.name}
+                          </Typography>
+                          {selectedActivity.approvedAt && (
+                            <Typography variant="body2" sx={{ mb: 1 }}>
+                              <strong>Fecha de aprobación:</strong> {
+                                typeof selectedActivity.approvedAt === 'object' && typeof selectedActivity.approvedAt.toDate === 'function'
+                                  ? formatDate(selectedActivity.approvedAt.toDate())
+                                  : formatDate(selectedActivity.approvedAt)
+                              }
+                            </Typography>
+                          )}
+                        </>
+                      )}
+                      
+                      {selectedActivity.status === 'rejected' && (
+                        <>
+                          {selectedActivity.approvedBy && (
+                            <Typography variant="body2" sx={{ mb: 1 }}>
+                              <strong>Rechazado por:</strong> {selectedActivity.approvedBy.name}
+                            </Typography>
+                          )}
+                          {selectedActivity.rejectionReason && (
+                            <Box sx={{ mt: 1, p: 2, bgcolor: 'error.light', borderRadius: 1 }}>
+                              <Typography variant="body2" color="error.contrastText">
+                                <strong>Motivo del rechazo:</strong> {selectedActivity.rejectionReason}
+                              </Typography>
+                            </Box>
+                          )}
+                        </>
+                      )}
+
+                      {/* ENLACE A GOOGLE DRIVE */}
+                      {selectedActivity.driveLink && (
+                        <Box sx={{ mt: 2 }}>
+                          <Typography variant="subtitle2" gutterBottom>
+                            Evidencias en Google Drive:
+                          </Typography>
+                          <Button 
+                            variant="outlined" 
+                            href={selectedActivity.driveLink} 
+                            target="_blank"
+                            startIcon={<InsertDriveFileIcon />}
+                          >
+                            Ver documentos en Drive
+                          </Button>
+                        </Box>
+                      )}
+                    </CardContent>
+                  </Card>
                 </Grid>
               </Grid>
             </DialogContent>
             <DialogActions>
+              <Button
+                onClick={() => handleDuplicateActivity(selectedActivity)}
+                startIcon={<FileCopyIcon />}
+              >
+                Duplicar
+              </Button>
               <Button onClick={handleCloseDetails}>
                 Cerrar
               </Button>
@@ -543,9 +773,51 @@ const ActivitiesPage = ({ user }) => {
                   Editar y Reenviar
                 </Button>
               )}
+              {selectedActivity.status === 'pending' && (
+                <Button 
+                  variant="contained" 
+                  color="error"
+                  onClick={() => {
+                    handleCloseDetails();
+                    handleConfirmDelete(selectedActivity);
+                  }}
+                  startIcon={<DeleteIcon />}
+                >
+                  Eliminar
+                </Button>
+              )}
             </DialogActions>
           </>
         )}
+      </Dialog>
+
+      {/* Diálogo de confirmación para eliminar actividad */}
+      <Dialog
+        open={deleteDialogOpen}
+        onClose={() => setDeleteDialogOpen(false)}
+      >
+        <DialogTitle>Confirmar eliminación</DialogTitle>
+        <DialogContent>
+          <DialogContentText>
+            ¿Está seguro de que desea eliminar esta actividad? Esta acción no se puede deshacer.
+          </DialogContentText>
+        </DialogContent>
+        <DialogActions>
+          <Button 
+            onClick={() => setDeleteDialogOpen(false)} 
+            disabled={deletingActivity}
+          >
+            Cancelar
+          </Button>
+          <Button 
+            onClick={handleDeleteActivity} 
+            color="error" 
+            variant="contained"
+            disabled={deletingActivity}
+          >
+            {deletingActivity ? <CircularProgress size={24} /> : "Eliminar"}
+          </Button>
+        </DialogActions>
       </Dialog>
 
       <Snackbar

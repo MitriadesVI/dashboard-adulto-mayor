@@ -4,35 +4,43 @@ import {
   signInWithEmailAndPassword, 
   signOut, 
   createUserWithEmailAndPassword,
-  sendPasswordResetEmail
+  sendPasswordResetEmail,
+  updatePassword,
+  reauthenticateWithCredential,
+  EmailAuthProvider
 } from 'firebase/auth';
-import { doc, setDoc, getDoc, serverTimestamp } from 'firebase/firestore';
+import { doc, setDoc, getDoc, serverTimestamp, updateDoc } from 'firebase/firestore';
 import { auth, db } from '../firebase/config';
 
 const authService = {
-  // Iniciar sesión
+  // ... (mantener todas las funciones existentes)
+  
+  // Iniciar sesión - CORREGIDO TEMPORALMENTE
   login: async (email, password) => {
     try {
       const userCredential = await signInWithEmailAndPassword(auth, email, password);
       const user = userCredential.user;
       
-      try {
-        await setDoc(doc(db, 'users', user.uid), {
-          lastLogin: serverTimestamp()
-        }, { merge: true });
-      } catch (updateError) {
-        console.warn('Error al actualizar lastLogin (no crítico):', updateError);
-      }
+      // ❌ COMENTADO TEMPORALMENTE - ESTA LÍNEA CAUSA EL PROBLEMA
+      // try {
+      //   await setDoc(doc(db, 'users', user.uid), {
+      //     lastLogin: serverTimestamp()
+      //   }, { merge: true });
+      // } catch (updateError) {
+      //   console.warn('Error al actualizar lastLogin (no crítico):', updateError);
+      // }
       
       try {
         const userDoc = await getDoc(doc(db, 'users', user.uid));
         
         if (userDoc.exists()) {
-          return {
+          const userData = {
             uid: user.uid,
             email: user.email,
             ...userDoc.data()
           };
+          console.log("✅ Usuario logueado exitosamente:", userData.email, "Rol:", userData.role);
+          return userData;
         } else {
           console.warn('Usuario autenticado pero sin documento en Firestore (login)');
           const basicUserData = {
@@ -55,9 +63,9 @@ const authService = {
                     ...createdDoc.data()
                 };
             }
-            // Si la re-lectura falla o no existe por alguna razón, devolver datos básicos sin timestamps resueltos
             const returnData = { ...basicUserData };
-            delete returnData.createdAt; // serverTimestamp no es serializable directamente
+            delete returnData.createdAt;
+            console.log("✅ Usuario creado y logueado:", returnData.email);
             return returnData;
 
           } catch (setDocError) {
@@ -78,7 +86,7 @@ const authService = {
         };
       }
     } catch (error) {
-      console.error('Error en inicio de sesión (Firebase Auth):', error.code, error.message);
+      console.error('❌ Error en inicio de sesión (Firebase Auth):', error.code, error.message);
       throw error;
     }
   },
@@ -86,98 +94,215 @@ const authService = {
   logout: async () => {
     try {
       await signOut(auth);
-      console.log("Usuario cerró sesión exitosamente.");
+      console.log("✅ Usuario cerró sesión exitosamente.");
       return true;
     } catch (error) {
-      console.error('Error al cerrar sesión:', error);
+      console.error('❌ Error al cerrar sesión:', error);
       throw error;
     }
   },
   
-  // --- FUNCIÓN registerUser MODIFICADA ---
   registerUser: async (email, password, userData) => {
     try {
       const userCredential = await createUserWithEmailAndPassword(auth, email, password);
       const user = userCredential.user;
       
-      // Crear una copia de userData para modificarla si es necesario
       const userProfileDataToSave = { ...userData };
 
-      // Asegurar que adminType esté establecido si es contractor-admin
       if (userProfileDataToSave.role === 'contractor-admin' && !userProfileDataToSave.adminType) {
-        userProfileDataToSave.adminType = 'secondary'; // Por defecto, los nuevos son secundarios
+        userProfileDataToSave.adminType = 'secondary';
         console.log(`Asignado adminType='secondary' por defecto para contractor-admin: ${email}`);
       }
       
-      // Guardar datos del usuario en Firestore con manejo de errores
       try {
         await setDoc(doc(db, 'users', user.uid), {
           uid: user.uid,
           email: user.email,
-          ...userProfileDataToSave, // Usar la copia modificada
+          ...userProfileDataToSave,
           createdAt: serverTimestamp(),
-          lastLogin: serverTimestamp()
+          // ❌ COMENTADO TEMPORALMENTE
+          // lastLogin: serverTimestamp()
         });
-        console.log("Datos de usuario guardados en Firestore para:", email);
+        console.log("✅ Datos de usuario guardados en Firestore para:", email);
       } catch (firestoreError) {
-        console.error('Error al guardar datos en Firestore para el nuevo usuario:', email, firestoreError);
-        // El usuario ya está creado en Authentication. Considerar si se debe eliminar el usuario de Auth aquí.
+        console.error('❌ Error al guardar datos en Firestore para el nuevo usuario:', email, firestoreError);
       }
       
-      // Devolver los datos con los que se intentó crear el perfil,
-      // pero sin los serverTimestamps ya que no se resuelven inmediatamente en el cliente
-      // y no son serializables directamente (ej. para localStorage).
       const returnData = { 
         uid: user.uid,
         email: user.email,
-        ...userProfileDataToSave // Devolver la copia que podría tener adminType añadido
+        ...userProfileDataToSave
        };
-      // No es necesario eliminar createdAt y lastLogin aquí, ya que no los añadimos a returnData
-      // si userProfileDataToSave no los tenía explícitamente (lo cual no debería).
-      // La función que llama (ej. Login.jsx) recibirá estos datos y luego App.js
-      // obtendrá la versión completa con timestamps resueltos de Firestore.
       return returnData;
 
     } catch (error) {
-      console.error('Error al registrar usuario (Firebase Auth):', error.code, error.message);
+      console.error('❌ Error al registrar usuario (Firebase Auth):', error.code, error.message);
       throw error;
     }
   },
-  // --- FIN FUNCIÓN registerUser MODIFICADA ---
   
   resetPassword: async (email) => {
     try {
       await sendPasswordResetEmail(auth, email);
-      console.log("Correo de restablecimiento de contraseña enviado a:", email);
+      console.log("✅ Correo de restablecimiento de contraseña enviado a:", email);
       return true;
     } catch (error) {
-      console.error('Error al enviar correo de restablecimiento:', error);
+      console.error('❌ Error al enviar correo de restablecimiento:', error);
       throw error;
+    }
+  },
+
+  // ===== NUEVAS FUNCIONES PARA CAMBIO DE CONTRASEÑA =====
+  
+  // Cambiar contraseña del usuario actual
+  changePassword: async (currentPassword, newPassword) => {
+    try {
+      const user = auth.currentUser;
+      if (!user) {
+        throw new Error('No hay usuario autenticado');
+      }
+
+      // Crear credencial con la contraseña actual
+      const credential = EmailAuthProvider.credential(user.email, currentPassword);
+      
+      // Re-autenticar al usuario
+      await reauthenticateWithCredential(user, credential);
+      console.log('✅ Usuario re-autenticado exitosamente');
+      
+      // Actualizar la contraseña
+      await updatePassword(user, newPassword);
+      console.log('✅ Contraseña actualizada exitosamente');
+      
+      // ❌ COMENTADO TEMPORALMENTE - REGISTRAR EL CAMBIO EN FIRESTORE
+      // try {
+      //   await updateDoc(doc(db, 'users', user.uid), {
+      //     passwordChangedAt: serverTimestamp()
+      //   });
+      // } catch (updateError) {
+      //   console.warn('Error al registrar cambio de contraseña en Firestore (no crítico):', updateError);
+      // }
+      
+      return { success: true, message: 'Contraseña actualizada correctamente' };
+      
+    } catch (error) {
+      console.error('❌ Error al cambiar contraseña:', error);
+      
+      // Manejar errores específicos
+      let errorMessage = 'Error al cambiar la contraseña';
+      switch (error.code) {
+        case 'auth/wrong-password':
+          errorMessage = 'La contraseña actual es incorrecta';
+          break;
+        case 'auth/weak-password':
+          errorMessage = 'La nueva contraseña es muy débil. Debe tener al menos 6 caracteres';
+          break;
+        case 'auth/requires-recent-login':
+          errorMessage = 'Por seguridad, debe volver a iniciar sesión antes de cambiar su contraseña';
+          break;
+        case 'auth/user-disabled':
+          errorMessage = 'Su cuenta está deshabilitada';
+          break;
+        case 'auth/user-not-found':
+          errorMessage = 'Usuario no encontrado';
+          break;
+        case 'auth/invalid-credential':
+          errorMessage = 'La contraseña actual es incorrecta';
+          break;
+        default:
+          errorMessage = error.message || 'Error desconocido al cambiar contraseña';
+      }
+      
+      throw new Error(errorMessage);
+    }
+  },
+
+  // Resetear contraseña de otro usuario (solo para admins)
+  resetUserPassword: async (email) => {
+    try {
+      await sendPasswordResetEmail(auth, email);
+      console.log("✅ Correo de restablecimiento enviado a:", email);
+      return { 
+        success: true, 
+        message: `Se ha enviado un correo de restablecimiento a ${email}` 
+      };
+    } catch (error) {
+      console.error('❌ Error al resetear contraseña de usuario:', error);
+      
+      let errorMessage = 'Error al enviar correo de restablecimiento';
+      switch (error.code) {
+        case 'auth/user-not-found':
+          errorMessage = 'No se encontró un usuario con ese correo electrónico';
+          break;
+        case 'auth/invalid-email':
+          errorMessage = 'El correo electrónico no es válido';
+          break;
+        case 'auth/too-many-requests':
+          errorMessage = 'Demasiados intentos. Intente más tarde';
+          break;
+        default:
+          errorMessage = error.message || 'Error desconocido al resetear contraseña';
+      }
+      
+      throw new Error(errorMessage);
+    }
+  },
+
+  // Actualizar perfil del usuario
+  updateUserProfile: async (userId, profileData) => {
+    try {
+      const userRef = doc(db, 'users', userId);
+      
+      // Solo permitir actualizar ciertos campos
+      const allowedFields = ['name', 'displayName', 'photoURL'];
+      const updateData = {};
+      
+      Object.keys(profileData).forEach(key => {
+        if (allowedFields.includes(key) && profileData[key] !== undefined) {
+          updateData[key] = profileData[key];
+        }
+      });
+      
+      if (Object.keys(updateData).length === 0) {
+        return { success: false, message: 'No hay campos válidos para actualizar' };
+      }
+      
+      updateData.updatedAt = serverTimestamp();
+      
+      await updateDoc(userRef, updateData);
+      console.log('✅ Perfil actualizado exitosamente');
+      
+      return { success: true, message: 'Perfil actualizado correctamente' };
+      
+    } catch (error) {
+      console.error('❌ Error al actualizar perfil:', error);
+      throw new Error('Error al actualizar el perfil: ' + error.message);
     }
   },
   
   getCurrentUser: () => {
     return new Promise((resolve, reject) => {
       let timeoutId = setTimeout(() => {
-        console.warn("getCurrentUser: Timeout después de 8 segundos.");
+        console.warn("⏰ getCurrentUser: Timeout después de 8 segundos.");
         resolve(null); 
       }, 8000);
       
       const currentUser = auth.currentUser;
       if (currentUser) {
         clearTimeout(timeoutId);
-        console.log("getCurrentUser: Usuario desde auth.currentUser:", currentUser.email);
+        console.log("✅ getCurrentUser: Usuario desde auth.currentUser:", currentUser.email);
         getDoc(doc(db, 'users', currentUser.uid))
           .then(userDoc => {
             if (userDoc.exists()) {
-              resolve({ uid: currentUser.uid, email: currentUser.email, ...userDoc.data() });
+              const userData = { uid: currentUser.uid, email: currentUser.email, ...userDoc.data() };
+              console.log("✅ getCurrentUser: Datos obtenidos de Firestore:", userData.role);
+              resolve(userData);
             } else {
-              console.warn('getCurrentUser: auth.currentUser existe pero sin doc en Firestore:', currentUser.email);
+              console.warn('⚠️ getCurrentUser: auth.currentUser existe pero sin doc en Firestore:', currentUser.email);
               resolve({ uid: currentUser.uid, email: currentUser.email, name: currentUser.email.split('@')[0], role: 'field', contractor: 'PENDIENTE', active: true });
             }
           })
           .catch(error => {
-            console.error('getCurrentUser: Error Firestore (auth.currentUser):', error);
+            console.error('❌ getCurrentUser: Error Firestore (auth.currentUser):', error);
             resolve({ uid: currentUser.uid, email: currentUser.email, name: currentUser.email.split('@')[0], role: 'field', contractor: 'PENDIENTE', active: true });
           });
         return;
@@ -187,27 +312,29 @@ const authService = {
         clearTimeout(timeoutId); 
         unsubscribe(); 
         if (userAuth) {
-          console.log("getCurrentUser: Usuario desde onAuthStateChanged:", userAuth.email);
+          console.log("✅ getCurrentUser: Usuario desde onAuthStateChanged:", userAuth.email);
           try {
             const userDoc = await getDoc(doc(db, 'users', userAuth.uid));
             if (userDoc.exists()) {
-              resolve({ uid: userAuth.uid, email: userAuth.email, ...userDoc.data() });
+              const userData = { uid: userAuth.uid, email: userAuth.email, ...userDoc.data() };
+              console.log("✅ getCurrentUser: Datos obtenidos (onAuthStateChanged):", userData.role);
+              resolve(userData);
             } else {
-              console.warn('getCurrentUser: onAuthStateChanged dio user pero sin doc en Firestore:', userAuth.email);
+              console.warn('⚠️ getCurrentUser: onAuthStateChanged dio user pero sin doc en Firestore:', userAuth.email);
               resolve({ uid: userAuth.uid, email: userAuth.email, name: userAuth.email.split('@')[0], role: 'field', contractor: 'PENDIENTE', active: true });
             }
           } catch (error) {
-            console.error('getCurrentUser: Error Firestore (onAuthStateChanged):', error);
+            console.error('❌ getCurrentUser: Error Firestore (onAuthStateChanged):', error);
             resolve({ uid: userAuth.uid, email: userAuth.email, name: userAuth.email.split('@')[0], role: 'field', contractor: 'PENDIENTE', active: true });
           }
         } else {
-          console.log("getCurrentUser: No hay usuario (onAuthStateChanged).");
+          console.log("ℹ️ getCurrentUser: No hay usuario (onAuthStateChanged).");
           resolve(null);
         }
       }, (error) => { 
         clearTimeout(timeoutId);
         unsubscribe(); 
-        console.error("getCurrentUser: Error en listener onAuthStateChanged:", error);
+        console.error("❌ getCurrentUser: Error en listener onAuthStateChanged:", error);
         resolve(null); 
       });
     });

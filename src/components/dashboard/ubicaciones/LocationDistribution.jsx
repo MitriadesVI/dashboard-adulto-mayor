@@ -1,4 +1,4 @@
-// src/components/dashboard/locations/LocationDistribution.jsx
+// src/components/dashboard/ubicaciones/LocationDistribution.jsx - ACTUALIZADO
 
 import React from 'react';
 import { Card, CardContent, CardHeader } from '@mui/material';
@@ -13,7 +13,7 @@ const LocationDistribution = ({
   vertical = false,
   limit = 10
 }) => {
-  // Función para contar actividades por ubicación
+  // FUNCIÓN CORREGIDA - Usar nueva estructura de datos
   const getActivityCountsByLocation = () => {
     if (!activities || !activities.length) return [];
     
@@ -23,6 +23,11 @@ const LocationDistribution = ({
         return;
       }
       
+      // CORRECCIÓN: Solo contar actividades educativas reales
+      if (!activity.educationalActivity || !activity.educationalActivity.included) {
+        return; // Saltamos las que no son actividades educativas
+      }
+      
       const locationName = activity.location.name;
       counts[locationName] = (counts[locationName] || 0) + 1;
     });
@@ -30,14 +35,17 @@ const LocationDistribution = ({
     return Object.entries(counts)
       .map(([name, value]) => ({ name, value }))
       .sort((a, b) => b.value - a.value)
-      .slice(0, limit);  // Limitar a 'limit' para legibilidad
+      .slice(0, limit);
   };
 
   const data = getActivityCountsByLocation();
 
   return (
     <Card>
-      <CardHeader title={title} />
+      <CardHeader 
+        title={title} 
+        subheader="Solo actividades educativas (no incluye entregas de alimentos)" 
+      />
       <CardContent>
         <ResponsiveContainer width="100%" height={300}>
           <BarChart
@@ -64,7 +72,7 @@ const LocationDistribution = ({
             <Legend />
             <Bar 
               dataKey="value" 
-              name="Actividades" 
+              name="Actividades Educativas" 
               fill="#8884d8" 
             />
           </BarChart>

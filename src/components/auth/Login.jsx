@@ -17,7 +17,7 @@ import * as Yup from 'yup';
 import authService from '../../services/authService';
 import localStorageService from '../../services/localStorageService';
 
-const Login = () => {
+const Login = ({ onLoginSuccess }) => { // ← RECIBIR LA PROP
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const navigate = useNavigate();
@@ -117,21 +117,35 @@ const Login = () => {
       setError('');
       
       try {
+        console.log("🔑 Intentando login con:", values.email);
         const user = await authService.login(values.email, values.password);
+        
+        console.log("✅ Login exitoso en Login.jsx:", user.email, "Rol:", user.role);
         
         // Guardar usuario en localStorage
         localStorageService.saveUser(user);
+        console.log("💾 Usuario guardado en localStorage");
         
-        // Redirigir según el rol
-        if (user.role === 'district') {
-          navigate('/dashboard');
-        } else if (user.role === 'contractor-admin') {
-          navigate('/approval');
-        } else {
-          navigate('/activities');
+        // ✅ LLAMAR A onLoginSuccess ANTES DE NAVEGAR
+        if (onLoginSuccess) {
+          console.log("📞 Llamando onLoginSuccess...");
+          onLoginSuccess(user);
         }
+        
+        // ✅ NAVEGACIÓN AUTOMÁTICA BASADA EN ROLES
+        // App.js se encargará de la navegación automática, pero por si acaso:
+        setTimeout(() => {
+          if (user.role === 'district') {
+            navigate('/dashboard');
+          } else if (user.role === 'contractor-admin') {
+            navigate('/approval');
+          } else {
+            navigate('/activities');
+          }
+        }, 100); // Pequeño delay para que App.js procese primero
+        
       } catch (error) {
-        console.error('Error de inicio de sesión:', error);
+        console.error('❌ Error de inicio de sesión:', error);
         
         // Manejar diferentes tipos de errores de autenticación de Firebase
         if (error.code === 'auth/user-not-found' || error.code === 'auth/wrong-password') {

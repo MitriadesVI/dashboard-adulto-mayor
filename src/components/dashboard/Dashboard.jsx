@@ -13,13 +13,22 @@ import DashboardSummary from './overview/DashboardSummary';
 import ActivityTypeChart from './overview/ActivityTypeChart';
 import ActivityTimeline from './activities/ActivityTimeline';
 import ActivitySubtypeChart from './activities/ActivitySubtypeChart';
-import LocationDistribution from './locations/LocationDistribution';
-import BeneficiariesByLocation from './locations/BeneficiariesByLocation';
+import LocationDistribution from './ubicaciones/LocationDistribution';
+import BeneficiariesByLocation from './ubicaciones/BeneficiariesByLocation';
 import GoalsSummary from './goals/GoalsSummary';
 import DetailedGoalsChart from './goals/DetailedGoalsChart';
+import GoalsProgressEnhanced from './goals/GoalsProgressEnhanced';
 import AlertsPanel from './alerts/AlertsPanel';
-import LocationManager from './locations/LocationManager';
+import LocationManager from './ubicaciones/LocationManager';
 import NoDataMessage from './common/NoDataMessage';
+import NutritionStats from './overview/NutritionStats';
+import ModalityDistributionChart from './activities/ModalityDistributionChart';
+import LocationAnalysis from './ubicaciones/LocationAnalysis';
+
+// Nuevos componentes de modalidad
+import ModalityEfficiencyDashboard from './overview/ModalityEfficiencyDashboard';
+import PerformanceComparison from './modality/PerformanceComparison';
+import TemporalAnalysis from './modality/TemporalAnalysis';
 
 // Importar servicios
 import { exportToCSV } from './common/helpers';
@@ -52,7 +61,7 @@ const Dashboard = ({ user, activities, goals, loading, onFilterChange }) => {
   const [filteredActivitiesLocal, setFilteredActivitiesLocal] = useState([]);
   const [filterType, setFilterType] = useState('all');
   const [filterLocation, setFilterLocation] = useState('all');
-  const [debugMode, setDebugMode] = useState(false); // Modo depuración
+  const [debugMode, setDebugMode] = useState(false);
   const [loadingFilters, setLoadingFilters] = useState(false);
   const [error, setError] = useState(null);
 
@@ -222,23 +231,25 @@ const Dashboard = ({ user, activities, goals, loading, onFilterChange }) => {
           </Alert>
         )}
 
-        {/* Panel de filtros */}
-        <FilterPanel 
-          filterContractor={filterContractor}
-          setFilterContractor={setFilterContractor}
-          filterType={filterType}
-          setFilterType={setFilterType}
-          filterLocation={filterLocation}
-          setFilterLocation={setFilterLocation}
-          filterDateStart={filterDateStart}
-          setFilterDateStart={setFilterDateStart}
-          filterDateEnd={filterDateEnd}
-          setFilterDateEnd={setFilterDateEnd}
-          onSubmit={handleFilterSubmit}
-          loading={loadingFilters}
-          debugMode={debugMode}
-          setDebugMode={setDebugMode}
-        />
+        {/* Panel de filtros - Solo mostrar en pestañas que lo necesiten */}
+        {tabValue !== 3 && ( // No mostrar filtros en la pestaña de análisis por ubicación
+          <FilterPanel 
+            filterContractor={filterContractor}
+            setFilterContractor={setFilterContractor}
+            filterType={filterType}
+            setFilterType={setFilterType}
+            filterLocation={filterLocation}
+            setFilterLocation={setFilterLocation}
+            filterDateStart={filterDateStart}
+            setFilterDateStart={setFilterDateStart}
+            filterDateEnd={filterDateEnd}
+            setFilterDateEnd={setFilterDateEnd}
+            onSubmit={handleFilterSubmit}
+            loading={loadingFilters}
+            debugMode={debugMode}
+            setDebugMode={setDebugMode}
+          />
+        )}
 
         {/* Tabs principales */}
         <Box sx={{ borderBottom: 1, borderColor: 'divider', mb: 2 }}>
@@ -251,6 +262,8 @@ const Dashboard = ({ user, activities, goals, loading, onFilterChange }) => {
           >
             <Tab label="Visión General" />
             <Tab label="Detalle de Actividades" />
+            <Tab label="Detalles por Tipo de Espacio" />
+            <Tab label="Análisis por Ubicación" />
             <Tab label="Progreso de Metas" />
             <Tab label="Alertas" />
             <Tab label="Gestión de Espacios" />
@@ -258,7 +271,7 @@ const Dashboard = ({ user, activities, goals, loading, onFilterChange }) => {
         </Box>
         
         {/* Información de depuración */}
-        {debugMode && (
+        {debugMode && tabValue !== 3 && (
           <DashboardSummary 
             activities={activities}
             filteredActivities={filteredActivitiesLocal}
@@ -266,11 +279,20 @@ const Dashboard = ({ user, activities, goals, loading, onFilterChange }) => {
           />
         )}
         
-        {/* Tab: Visión General */}
+        {/* Tab: Visión General - ACTUALIZADO */}
         <TabPanel value={tabValue} index={0}>
           {filteredActivitiesLocal.length > 0 ? ( 
             <>
               <KPICards activities={filteredActivitiesLocal} />
+              
+              <Box sx={{ mt: 3 }}>
+                <NutritionStats activities={filteredActivitiesLocal} />
+              </Box>
+              
+              {/* Nuevo componente de eficiencia */}
+              <Box sx={{ mt: 3 }}>
+                <ModalityEfficiencyDashboard activities={filteredActivitiesLocal} />
+              </Box>
               
               <Grid container spacing={3} sx={{ mt: 1 }}>
                 <Grid item xs={12} md={6}>
@@ -285,7 +307,7 @@ const Dashboard = ({ user, activities, goals, loading, onFilterChange }) => {
                   <LocationDistribution 
                     activities={filteredActivitiesLocal}
                     vertical={true} 
-                    title="Top Ubicaciones"
+                    title="Top Ubicaciones por Actividades Educativas"
                   />
                 </Grid>
                 
@@ -320,6 +342,30 @@ const Dashboard = ({ user, activities, goals, loading, onFilterChange }) => {
               <Grid item xs={12}>
                 <ActivitySubtypeChart activities={filteredActivitiesLocal} />
               </Grid>
+            </Grid>
+          ) : (
+            <NoDataMessage 
+              onResetFilters={handleResetFilters}
+              onRefreshData={handleFilterSubmit}
+            />
+          )}
+        </TabPanel>
+
+        {/* Tab: Detalles por Tipo de Espacio - MEJORADO */}
+        <TabPanel value={tabValue} index={2}>
+          {filteredActivitiesLocal.length > 0 ? (
+            <Grid container spacing={3}>
+              <Grid item xs={12}>
+                <PerformanceComparison activities={filteredActivitiesLocal} />
+              </Grid>
+              
+              <Grid item xs={12}>
+                <TemporalAnalysis activities={filteredActivitiesLocal} />
+              </Grid>
+              
+              <Grid item xs={12}>
+                <ModalityDistributionChart activities={filteredActivitiesLocal} />
+              </Grid>
               
               <Grid item xs={12}>
                 <BeneficiariesByLocation activities={filteredActivitiesLocal} />
@@ -333,8 +379,13 @@ const Dashboard = ({ user, activities, goals, loading, onFilterChange }) => {
           )}
         </TabPanel>
 
-        {/* Tab: Progreso de Metas */}
-        <TabPanel value={tabValue} index={2}>
+        {/* Tab: Análisis por Ubicación */}
+        <TabPanel value={tabValue} index={3}>
+          <LocationAnalysis activities={activities} />
+        </TabPanel>
+
+        {/* Tab: Progreso de Metas - ACTUALIZADO */}
+        <TabPanel value={tabValue} index={4}>
           {filterContractor !== 'all' && filterContractor !== 'Todos' ? (
             goals ? (
               <Grid container spacing={3}>
@@ -348,23 +399,48 @@ const Dashboard = ({ user, activities, goals, loading, onFilterChange }) => {
                 <Grid item xs={12}>
                   <DetailedGoalsChart 
                     goals={goals}
+                    contractor={filterContractor}
+                  />
+                </Grid>
+                
+                <Grid item xs={12}>
+                  <GoalsProgressEnhanced 
+                    goals={goals} 
+                    contractor={filterContractor}
+                    onRefresh={() => onFilterChange({
+                      contractor: filterContractor,
+                      type: 'all',
+                      locationType: 'all', 
+                      startDate: '',
+                      endDate: ''
+                    })}
                   />
                 </Grid>
               </Grid>
             ) : (
               <Paper sx={{ p: 3, textAlign: 'center' }}>
-                <Typography variant="h6">No hay metas configuradas para este contratista.</Typography>
+                <Typography variant="h6" gutterBottom>
+                  No hay metas configuradas para {filterContractor}
+                </Typography>
+                <Typography variant="body2" color="text.secondary">
+                  Configure las metas en el Panel de Administración para ver el progreso.
+                </Typography>
               </Paper>
             )
           ) : (
             <Paper sx={{ p: 3, textAlign: 'center' }}>
-              <Typography variant="h6">Seleccione un contratista específico para ver su progreso de metas.</Typography>
+              <Typography variant="h6" gutterBottom>
+                Seleccione un contratista específico
+              </Typography>
+              <Typography variant="body2" color="text.secondary">
+                Use los filtros superiores para seleccionar CUC o FUNDACARIBE y ver su progreso de metas.
+              </Typography>
             </Paper>
           )}
         </TabPanel>
         
         {/* Tab: Alertas */}
-        <TabPanel value={tabValue} index={3}>
+        <TabPanel value={tabValue} index={5}>
           <AlertsPanel 
             activities={filteredActivitiesLocal}
             goals={goals}
@@ -373,7 +449,7 @@ const Dashboard = ({ user, activities, goals, loading, onFilterChange }) => {
         </TabPanel>
         
         {/* Tab: Gestión de Espacios */}
-        <TabPanel value={tabValue} index={4}>
+        <TabPanel value={tabValue} index={6}>
           <LocationManager user={user} />
         </TabPanel>
       </Box>

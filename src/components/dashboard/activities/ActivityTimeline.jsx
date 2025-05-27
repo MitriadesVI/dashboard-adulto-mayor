@@ -1,5 +1,4 @@
 // src/components/dashboard/activities/ActivityTimeline.jsx
-
 import React from 'react';
 import { Card, CardContent, CardHeader } from '@mui/material';
 import { 
@@ -8,7 +7,7 @@ import {
 } from 'recharts';
 
 const ActivityTimeline = ({ activities, title = "Actividades por Fecha" }) => {
-  // Función para agrupar actividades por fecha
+  // Función MODIFICADA para no contar entregas de alimentos
   const getActivityCountsByDate = () => {
     if (!activities || !activities.length) return [];
     
@@ -17,6 +16,14 @@ const ActivityTimeline = ({ activities, title = "Actividades por Fecha" }) => {
     // Agrupar por fecha
     activities.forEach(activity => {
       if (!activity || !activity.date) return;
+      
+      // MODIFICADO: NO contar entregas de alimentos como actividades
+      if (activity.type === 'nutrition' && 
+          (activity.subtype === 'centerRation' || 
+           activity.subtype === 'parkSnack' || 
+           activity.subtype === 'ration')) {
+        return; // Saltamos estas entradas
+      }
       
       try {
         // Formato YYYY-MM-DD
@@ -37,7 +44,10 @@ const ActivityTimeline = ({ activities, title = "Actividades por Fecha" }) => {
 
   return (
     <Card>
-      <CardHeader title={title} />
+      <CardHeader 
+        title={title} 
+        subheader="No incluye entregas de raciones y meriendas" 
+      />
       <CardContent>
         <ResponsiveContainer width="100%" height={300}>
           <LineChart data={data}>

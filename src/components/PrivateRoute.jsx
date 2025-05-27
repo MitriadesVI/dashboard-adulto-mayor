@@ -1,39 +1,10 @@
-import React, { useState, useEffect } from 'react';
+import React from 'react';
 import { Navigate } from 'react-router-dom';
 import { Box, CircularProgress } from '@mui/material';
-import { auth } from '../firebase/config';
-import authService from '../services/authService';
 
-const PrivateRoute = ({ children, allowedRoles = [] }) => {
-  const [loading, setLoading] = useState(true);
-  const [user, setUser] = useState(null);
-
-  useEffect(() => {
-    const checkAuth = async () => {
-      try {
-        // Verificar si hay un usuario autenticado en Firebase
-        const unsubscribe = auth.onAuthStateChanged(async (firebaseUser) => {
-          if (firebaseUser) {
-            // Obtener datos completos del usuario de Firestore
-            const userData = await authService.getCurrentUser();
-            setUser(userData);
-          } else {
-            setUser(null);
-          }
-          setLoading(false);
-        });
-
-        return () => unsubscribe();
-      } catch (error) {
-        console.error('Error al verificar autenticación:', error);
-        setLoading(false);
-      }
-    };
-
-    checkAuth();
-  }, []);
-
-  if (loading) {
+const PrivateRoute = ({ children, allowedRoles = [], user }) => {
+  // Si no hay usuario definido, mostrar loading (App.js aún está verificando auth)
+  if (user === undefined) {
     return (
       <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh' }}>
         <CircularProgress />
@@ -41,7 +12,7 @@ const PrivateRoute = ({ children, allowedRoles = [] }) => {
     );
   }
 
-  // Si no hay usuario, redirigir al login
+  // Si no hay usuario autenticado, redirigir al login
   if (!user) {
     return <Navigate to="/login" replace />;
   }

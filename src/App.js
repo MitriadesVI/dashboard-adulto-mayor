@@ -1,4 +1,4 @@
-// App.js (Código Completo Mejorado)
+// App.js (Código Corregido para eliminar problemas de timing)
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
@@ -14,6 +14,9 @@ import ActivitiesPage from './components/pages/ActivitiesPage';
 import ApprovalPanel from './components/approval/ApprovalPanel';
 import AdminPanel from './components/pages/AdminPanel';
 import DiagnosticPage from './components/DiagnosticPage';
+
+// Dashboard del contratista
+import ContractorDashboard from './components/contractor/ContractorDashboard';
 
 // Componentes funcionales
 import PrivateRoute from './components/PrivateRoute';
@@ -51,100 +54,85 @@ const theme = createTheme({
 }, esES);
 
 function App() {
-  const [user, setUser] = useState(null);
+  // Estados de autenticación
+  const [user, setUser] = useState(undefined); // undefined = verificando, null = no autenticado, objeto = autenticado
   const [loading, setLoading] = useState(true);
+  const [authCompleted, setAuthCompleted] = useState(false);
+  
+  // Estados del dashboard (solo para distrito)
   const [activities, setActivities] = useState([]);
   const [goals, setGoals] = useState(null);
   const [loadingDashboard, setLoadingDashboard] = useState(false);
+  
+  // Estados de UI
   const [offline, setOffline] = useState(!navigator.onLine);
   const [error, setError] = useState(null);
   
   // Refs para controlar la inicialización
   const isInitialMount = useRef(true);
-  const authCheckCompleted = useRef(false);
 
-  // Comprobar autenticación al cargar
+  // ✅ VERIFICACIÓN DE AUTENTICACIÓN MEJORADA
   useEffect(() => {
     const checkAuth = async () => {
       if (!isInitialMount.current) return;
       isInitialMount.current = false;
       
-      console.log("Iniciando verificación de autenticación...");
+      console.log("🔍 Iniciando verificación de autenticación...");
       setLoading(true);
       setError(null);
       
-      // Agregar un timeout de seguridad para evitar carga infinita
-      const authTimeout = setTimeout(() => {
-        console.log("Timeout de autenticación activado, continuando con usuario local si existe");
-        setLoading(false);
-        const localUser = localStorageService.getUser();
-        if (localUser) {
-          console.log("Usando usuario de localStorage debido a timeout:", localUser.email);
-          setUser(localUser);
-        }
-      }, 8000); // 8 segundos de timeout
-      
       try {
-        // Primero intentar obtener usuario de localStorage para carga rápida
+        // Intentar obtener usuario de localStorage primero (carga rápida)
         const localUser = localStorageService.getUser();
         
         if (localUser) {
-          console.log("Usuario encontrado en localStorage:", localUser.email);
+          console.log("✅ Usuario encontrado en localStorage:", localUser.email);
           setUser(localUser);
-          clearTimeout(authTimeout); // Limpiar el timeout ya que tenemos usuario
-          setLoading(false); // Quitar estado de carga aquí también
           
-          // Luego verificar con Firebase para confirmar/actualizar
+          // Verificar con Firebase en segundo plano
           try {
-            console.log("Verificando usuario con Firebase en segundo plano...");
             const firebaseUser = await authService.getCurrentUser();
-            
             if (firebaseUser) {
-              console.log("Usuario verificado en Firebase:", firebaseUser.email);
-              // Actualizar el usuario si hay cambios
-              setUser(firebaseUser);
-              localStorageService.saveUser(firebaseUser);
+              console.log("✅ Usuario verificado en Firebase");
+              // Solo actualizar si hay cambios significativos
+              if (firebaseUser.email !== localUser.email || firebaseUser.role !== localUser.role) {
+                setUser(firebaseUser);
+                localStorageService.saveUser(firebaseUser);
+              }
             } else {
-              console.warn("Firebase no tiene usuario autenticado pero existe en localStorage");
-              // Podemos mantener el usuario local o limpiar según preferencia
-              // Por ahora lo mantenemos hasta que el usuario haga logout explícito
+              console.warn("⚠️ Usuario local existe pero no está en Firebase");
+              // Mantener usuario local hasta logout explícito
             }
           } catch (firebaseError) {
-            console.error("Error al verificar con Firebase:", firebaseError);
-            setError("Error de conexión. Usando datos locales.");
-            // Mantenemos el usuario local por ahora
+            console.error("❌ Error verificando con Firebase:", firebaseError);
+            // Mantener usuario local en caso de problemas de conexión
           }
         } else {
-          console.log("No hay usuario en localStorage, verificando con Firebase...");
+          console.log("🔍 No hay usuario local, verificando con Firebase...");
           try {
             const firebaseUser = await authService.getCurrentUser();
-            clearTimeout(authTimeout); // Limpiar el timeout
-            
             if (firebaseUser) {
-              console.log("Usuario encontrado en Firebase:", firebaseUser.email);
+              console.log("✅ Usuario encontrado en Firebase:", firebaseUser.email);
               setUser(firebaseUser);
               localStorageService.saveUser(firebaseUser);
             } else {
-              console.log("No hay usuario autenticado en Firebase");
+              console.log("ℹ️ No hay usuario autenticado");
               setUser(null);
             }
           } catch (firebaseError) {
-            console.error("Error al verificar con Firebase:", firebaseError);
-            setError("Error de conexión. Por favor inicie sesión nuevamente.");
+            console.error("❌ Error verificando Firebase:", firebaseError);
             setUser(null);
-          } finally {
-            setLoading(false);
+            setError("Error de conexión. Por favor inicie sesión nuevamente.");
           }
         }
       } catch (error) {
-        console.error('Error general en checkAuth:', error);
+        console.error('❌ Error general en checkAuth:', error);
         setError("Error inesperado. Por favor recargue la aplicación.");
         setUser(null);
-        clearTimeout(authTimeout);
-        setLoading(false);
       } finally {
-        authCheckCompleted.current = true;
-        console.log("Verificación de autenticación completada.");
+        setLoading(false);
+        setAuthCompleted(true);
+        console.log("✅ Verificación de autenticación completada");
       }
     };
 
@@ -162,57 +150,34 @@ function App() {
     };
   }, []);
 
-  // Función para cargar datos del dashboard
+  // ✅ CARGA DE DATOS DEL DASHBOARD MEJORADA
   const loadDashboardData = useCallback(async (filters = {}) => {
-    console.log("loadDashboardData llamado, verificando usuario...");
-    
-    // Verificar usuario actual
-    const currentUser = user || localStorageService.getUser();
-    
-    if (!currentUser) {
-      console.warn("No hay usuario disponible para cargar datos del dashboard");
-      setActivities([]);
-      setGoals(null);
-      return;
-    }
-    
-    if (currentUser.role !== 'district') {
-      console.warn(`Usuario con rol ${currentUser.role} no tiene permiso para ver el dashboard`);
-      setActivities([]);
-      setGoals(null);
+    // Solo cargar si hay usuario distrito y auth está completa
+    if (!user || user.role !== 'district' || !authCompleted) {
+      console.log("⏭️ Saltando carga de dashboard - usuario no es distrito o auth incompleta");
       return;
     }
 
-    console.log("Cargando datos del dashboard para:", currentUser.email);
-    console.log("Filtros aplicados:", filters);
+    console.log("📊 Cargando datos del dashboard para:", user.email);
     setLoadingDashboard(true);
     
     try {
-      // Obtener todas las actividades primero
-      console.log("Obteniendo todas las actividades...");
       const allActivitiesRaw = await activitiesService.getAllActivities();
-      console.log(`Se encontraron ${allActivitiesRaw.length} actividades en total`);
-      
-      // Filtrar por aprobadas
       const approvedActivities = allActivitiesRaw.filter(a => a && a.status === 'approved');
-      console.log(`De esas, ${approvedActivities.length} están aprobadas`);
       
-      // Aplicar filtros adicionales en memoria
+      // Aplicar filtros
       let filtered = [...approvedActivities];
       
       if (filters.contractor && filters.contractor !== 'all' && filters.contractor !== 'Todos') {
         filtered = filtered.filter(a => a && a.contractor === filters.contractor);
-        console.log(`Después de filtrar por contratista ${filters.contractor}: ${filtered.length} actividades`);
       }
       
       if (filters.type && filters.type !== 'all') {
         filtered = filtered.filter(a => a && a.type === filters.type);
-        console.log(`Después de filtrar por tipo ${filters.type}: ${filtered.length} actividades`);
       }
       
       if (filters.locationType && filters.locationType !== 'all') {
         filtered = filtered.filter(a => a && a.location && a.location.type === filters.locationType);
-        console.log(`Después de filtrar por ubicación ${filters.locationType}: ${filtered.length} actividades`);
       }
       
       if (filters.startDate) {
@@ -224,9 +189,8 @@ function App() {
             const activityDate = new Date(a.date);
             return !isNaN(activityDate.getTime()) && activityDate >= startDate;
           });
-          console.log(`Después de filtrar por fecha inicial ${filters.startDate}: ${filtered.length} actividades`);
         } catch (e) {
-          console.error("Error filtrando por fecha inicial:", filters.startDate, e);
+          console.error("Error filtrando por fecha inicial:", e);
         }
       }
       
@@ -239,14 +203,12 @@ function App() {
             const activityDate = new Date(a.date);
             return !isNaN(activityDate.getTime()) && activityDate <= endDate;
           });
-          console.log(`Después de filtrar por fecha final ${filters.endDate}: ${filtered.length} actividades`);
         } catch (e) {
-          console.error("Error filtrando por fecha final:", filters.endDate, e);
+          console.error("Error filtrando por fecha final:", e);
         }
       }
       
       setActivities(filtered);
-      console.log(`Actividades establecidas en el estado: ${filtered.length}`);
       
       // Cargar metas si se especifica un contratista
       if (filters.contractor && filters.contractor !== 'all' && filters.contractor !== 'Todos') {
@@ -254,7 +216,6 @@ function App() {
           const year = new Date().getFullYear();
           const goalsData = await goalsService.calculateProgress(filters.contractor, year, filtered);
           setGoals(goalsData);
-          console.log("Metas calculadas para el contratista:", filters.contractor);
         } catch (error) {
           console.error("Error al cargar/calcular metas:", error);
           setGoals(null);
@@ -263,64 +224,74 @@ function App() {
         setGoals(null);
       }
     } catch (error) {
-      console.error('Error general al cargar datos del dashboard:', error);
+      console.error('Error al cargar datos del dashboard:', error);
       setError("Error al cargar datos. Intente recargar la página.");
       setActivities([]);
       setGoals(null);
     } finally {
       setLoadingDashboard(false);
-      console.log("Carga de datos del dashboard finalizada.");
     }
-  }, [user]);
+  }, [user, authCompleted]);
 
-  // Cargar datos del dashboard cuando cambia el usuario
+  // ✅ CARGAR DATOS INICIALES SOLO CUANDO AUTH ESTÉ COMPLETA
   useEffect(() => {
-    if (user && user.role === 'district' && authCheckCompleted.current) { 
-      console.log("Usuario district detectado, cargando datos iniciales del dashboard...");
-      // Pequeño retraso para asegurar que todo está inicializado
+    if (user && user.role === 'district' && authCompleted) { 
+      console.log("📊 Usuario distrito detectado, cargando datos iniciales...");
+      // Pequeño delay para asegurar que el componente esté montado
       const timer = setTimeout(() => {
-        loadDashboardData();
-      }, 500);
+        loadDashboardData({
+          contractor: 'all',
+          type: 'all',
+          locationType: 'all',
+          startDate: '',
+          endDate: ''
+        });
+      }, 300);
       return () => clearTimeout(timer);
     }
-  }, [user, loadDashboardData]);
+  }, [user, authCompleted, loadDashboardData]);
 
-  // Funciones para login y logout
+  // ✅ FUNCIONES DE LOGIN/LOGOUT MEJORADAS
   const handleLoginSuccess = (loggedInUser) => {
-    console.log("Login exitoso:", loggedInUser.email);
+    console.log("✅ Login exitoso:", loggedInUser.email);
     setUser(loggedInUser); 
     localStorageService.saveUser(loggedInUser);
-    setError(null); 
+    setError(null);
+    setAuthCompleted(true); // Marcar auth como completa
   };
 
   const handleLogout = async () => {
-    console.log("Cerrando sesión...");
+    console.log("🚪 Cerrando sesión...");
     try {
       await authService.logout();
       setUser(null);
       localStorageService.clearAll();
-      console.log("Sesión cerrada y datos locales eliminados");
+      setActivities([]);
+      setGoals(null);
+      console.log("✅ Sesión cerrada correctamente");
     } catch (error) {
       console.error('Error al cerrar sesión:', error);
       setError("Error al cerrar sesión. Los datos locales han sido eliminados.");
       // Aún así limpiamos datos locales
       localStorageService.clearAll();
       setUser(null);
+      setActivities([]);
+      setGoals(null);
     }
   };
 
-  // Cerrar mensajes de error
   const handleCloseError = () => {
     setError(null);
   };
 
-  if (loading) {
+  // ✅ PANTALLA DE CARGA MEJORADA
+  if (loading || !authCompleted) {
     return (
       <Box sx={{ display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', height: '100vh' }}>
         <CircularProgress size={60} sx={{ mb: 3 }} />
         <Typography variant="h6">Cargando la aplicación...</Typography>
         <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
-          Verificando autenticación
+          {user === undefined ? 'Verificando autenticación...' : 'Preparando interfaz...'}
         </Typography>
       </Box>
     );
@@ -330,6 +301,7 @@ function App() {
     <ThemeProvider theme={theme}>
       <CssBaseline />
       <BrowserRouter>
+        {/* ✅ NAVBAR SOLO SI HAY USUARIO AUTENTICADO */}
         {user && <Navbar user={user} onLogout={handleLogout} offline={offline} />}
         
         <Box sx={{ 
@@ -340,7 +312,7 @@ function App() {
             pb: user ? 0 : 0, 
           }}
         >
-          {/* Mensajes de error persistentes */}
+          {/* Mensajes de error */}
           <Snackbar 
             open={!!error} 
             autoHideDuration={6000} 
@@ -353,11 +325,13 @@ function App() {
           </Snackbar>
           
           <Routes>
+            {/* ✅ LOGIN - Solo mostrar si no hay usuario */}
             <Route 
               path="/login" 
               element={user ? <Navigate to="/" /> : <Login onLoginSuccess={handleLoginSuccess} />} 
             />
             
+            {/* ✅ RUTAS PROTEGIDAS - Pasar user como prop */}
             <Route path="/activities" element={
               <PrivateRoute user={user} allowedRoles={['field', 'contractor-admin', 'district']}> 
                 <ActivitiesPage user={user} />
@@ -394,6 +368,7 @@ function App() {
               </PrivateRoute>
             } />
             
+            {/* ✅ RUTA PRINCIPAL - Navegación inteligente */}
             <Route 
               path="/" 
               element={
@@ -405,6 +380,7 @@ function App() {
               } 
             />
             
+            {/* ✅ 404 */}
             <Route path="*" element={
               <Box sx={{ p: 4, textAlign: 'center', mt: user ? 8 : 0 }}>
                 <Typography variant="h4" gutterBottom>
@@ -418,6 +394,7 @@ function App() {
           </Routes>
         </Box>
         
+        {/* ✅ FOOTER SOLO SI HAY USUARIO */}
         {user && <Footer />}
       </BrowserRouter>
     </ThemeProvider>
