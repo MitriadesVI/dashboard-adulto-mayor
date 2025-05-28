@@ -1,5 +1,3 @@
-// src/components/dashboard/ubicaciones/hooks/useLocationAnalysis.js
-
 import { useState } from 'react';
 import { 
   performDetailedAnalysis, 

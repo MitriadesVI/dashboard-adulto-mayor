@@ -1,6 +1,5 @@
 import { useState, useEffect } from 'react';
 import locationsService from '../../../../services/locationsService';
-
 export const useLocationData = (activities) => {
   const [availableLocations, setAvailableLocations] = useState([]);
   const [loading, setLoading] = useState(false);
