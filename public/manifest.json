@@ -1,21 +1,27 @@
 {
   "short_name": "SEPAM",
   "name": "SEPAM - Seguimiento Programa Adulto Mayor",
+  "description": "Sistema de Seguimiento para el Programa de Adulto Mayor del Distrito de Barranquilla",
   "icons": [
     {
-      "src": "/logo192.png", // Ruta absoluta desde la raíz
+      "src": "/logo192.png",
       "type": "image/png",
-      "sizes": "192x192"
+      "sizes": "192x192",
+      "purpose": "any maskable"
     },
     {
-      "src": "/logo512.png", // Ruta absoluta desde la raíz
+      "src": "/logo512.png", 
       "type": "image/png",
-      "sizes": "512x512"
+      "sizes": "512x512",
+      "purpose": "any maskable"
     }
   ],
-  "start_url": ".",
+  "start_url": "/",
   "display": "standalone",
+  "orientation": "portrait-primary",
   "background_color": "#ffffff",
   "theme_color": "#142334",
-  "description": "SEPAM - Sistema de Seguimiento para el Programa de Adulto Mayor del Distrito de Barranquilla."
+  "scope": "/",
+  "lang": "es-CO",
+  "dir": "ltr"
 }

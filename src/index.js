@@ -1,9 +1,12 @@
+// src/index.js
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 import './index.css';
 import App from './App';
 import reportWebVitals from './reportWebVitals';
-import * as serviceWorkerRegistration from './serviceWorkerRegistration'; // 1. IMPORTA ESTO
+
+// 🚀 IMPORTAR LA FUNCIÓN DE REGISTRO DEL SERVICE WORKER
+import { register as registerSW } from './serviceWorkerRegistration';
 
 const root = ReactDOM.createRoot(document.getElementById('root'));
 root.render(
@@ -12,13 +15,16 @@ root.render(
   </React.StrictMode>
 );
 
-// Si quieres que tu aplicación funcione offline y cargue más rápido,
-// puedes cambiar unregister() por register() abajo.
-// Nota: esto viene con algunas consideraciones.
-// Aprende más sobre service workers: https://cra.link/PWA
-serviceWorkerRegistration.register(); // 2. ASEGÚRATE DE LLAMAR A register()
+// 🚀 REGISTRAR EL SERVICE WORKER
+registerSW({
+  onSuccess: () => {
+    console.log('PWA: Contenido cacheado para uso offline');
+    // Opcional: Mostrar un toast/notificación al usuario
+  },
+  onUpdate: (registration) => {
+    console.log('PWA: Nuevo contenido disponible, recarga para actualizar');
+    // Opcional: Mostrar botón de "Actualizar app" al usuario
+  }
+});
 
-// Si quieres empezar a medir el rendimiento en tu app, pasa una función
-// para registrar resultados (por ejemplo: reportWebVitals(console.log))
-// o envía a un endpoint de analíticas. Aprende más: https://bit.ly/CRA-vitals
 reportWebVitals();

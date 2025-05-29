@@ -1,146 +1,182 @@
 // public/service-worker.js
 
-// 1. Nombre de nuestra caché (¡importante para las actualizaciones!)
-// Si cambias algo en los archivos que quieres cachear (URLS_TO_CACHE)
-// o en la lógica del service worker, DEBES CAMBIAR ESTE NOMBRE
-// para que el navegador actualice la caché. Ejemplo: 'mi-pwa-cache-v2'
-const CACHE_NAME = 'mi-pwa-cache-v1';
+// 🚀 VERSIÓN AUTOMÁTICA: Se actualiza cada vez que haces build
+// En desarrollo, cambia cada vez que modificas el archivo
+// En producción, puedes usar process.env o fecha de build
+const CACHE_VERSION = 'sepam-cache-' + new Date().getTime();
 
-// 2. Archivos que queremos guardar en caché la primera vez que el Service Worker se instala.
-// Estos son los archivos "base" o "esqueleto" de tu aplicación.
-// Ya he incluido los que mencionaste.
-const URLS_TO_CACHE = [
-  '/', // La página principal (index.html)
-  '/index.html', // Es bueno tenerlo explícito
-  '/manifest.json', // Tu manifest.json
-  '/favicon.ico', // Tu favicon
-  '/logo192.png', // Tu logo de 192x192
-  '/logo512.png', // Tu logo de 512x512
-  // --- ¡ATENCIÓN! Archivos de JavaScript y CSS ---
-  // Los archivos principales de JS y CSS generados por React (ej: /static/js/main.XXXX.js)
-  // cambian de nombre (el XXXX) cada vez que construyes la app.
-  // Por ahora, NO los incluiremos aquí para simplificar.
-  // El Service Worker los cacheará la PRIMERA VEZ que se pidan gracias al evento 'fetch' de abajo.
-  // Si quieres precachearlos (que se guarden durante la instalación), necesitarías
-  // una configuración más avanzada, a menudo usando una herramienta como Workbox
-  // que genera esta lista automáticamente.
-  //
-  // EJEMPLOS de otros archivos que PODRÍAS AÑADIR si los tienes y son cruciales
-  // y NO cambian de nombre frecuentemente:
-  // '/static/media/mi-logo-principal.svg',
-  // '/fonts/MiFuenteRegular.woff2',
-  // '/offline.html', // Si tuvieras una página offline personalizada
+// Archivos críticos que SIEMPRE deben estar disponibles offline
+const CRITICAL_URLS = [
+  '/',
+  '/index.html',
+  '/manifest.json',
+  '/favicon.ico',
+  '/logo192.png',
+  '/logo512.png'
 ];
 
-// 3. Evento "install": Se dispara cuando el Service Worker se instala por primera vez.
-//    Aquí es donde guardamos nuestros archivos base en la caché.
+// 🔧 CONFIGURACIÓN: Qué cachear y qué no
+const CACHE_STRATEGIES = {
+  // Archivos críticos: Cache First (rápido, siempre disponible)
+  critical: /\/(index\.html|manifest\.json|favicon\.ico|logo.*\.png)$/,
+  
+  // APIs Firebase: Network First (datos frescos, fallback a cache)
+  api: /firestore\.googleapis\.com|firebase/,
+  
+  // Assets estáticos: Cache First con validación
+  static: /\.(js|css|png|jpg|jpeg|gif|svg|woff|woff2)$/,
+  
+  // No cachear: Auth tokens, analytics
+  exclude: /\/(auth|analytics|tracking)/
+};
+
+// 📦 INSTALACIÓN: Cachear archivos críticos
 self.addEventListener('install', (event) => {
-  console.log('[Service Worker] Evento: install');
-  // waitUntil() espera a que la promesa que le pasamos se resuelva
-  // antes de considerar que la instalación ha terminado.
+  console.log('[SW] 🚀 Instalando versión:', CACHE_VERSION);
+  
   event.waitUntil(
-    caches.open(CACHE_NAME) // Abrimos (o creamos si no existe) nuestra caché por su nombre
-      .then((cache) => {
-        console.log('[Service Worker] Caché abierta. Cacheando archivos base:', URLS_TO_CACHE);
-        return cache.addAll(URLS_TO_CACHE); // Agregamos todos nuestros archivos base a la caché
+    caches.open(CACHE_VERSION)
+      .then(cache => {
+        console.log('[SW] 📦 Cacheando archivos críticos...');
+        return cache.addAll(CRITICAL_URLS);
       })
       .then(() => {
-        console.log('[Service Worker] Archivos base cacheados exitosamente. El Service Worker se instalará.');
-        // self.skipWaiting() fuerza al Service Worker en espera a convertirse en el activo.
-        // Esto es útil para que los cambios se apliquen más rápido durante el desarrollo.
-        return self.skipWaiting();
+        console.log('[SW] ✅ Archivos críticos cacheados');
+        return self.skipWaiting(); // Activa inmediatamente
       })
-      .catch((error) => {
-        console.error('[Service Worker] Falló el cacheo de archivos base durante la instalación:', error);
+      .catch(error => {
+        console.error('[SW] ❌ Error cacheando archivos críticos:', error);
       })
   );
 });
 
-// 4. Evento "activate": Se dispara después de la instalación (o cuando un nuevo SW reemplaza a uno viejo).
-//    Aquí es donde limpiamos cachés antiguas que ya no necesitamos.
+// 🧹 ACTIVACIÓN: Limpiar caches antiguos
 self.addEventListener('activate', (event) => {
-  console.log('[Service Worker] Evento: activate');
+  console.log('[SW] 🔄 Activando versión:', CACHE_VERSION);
+  
   event.waitUntil(
-    caches.keys().then((cacheNames) => { // Obtenemos los nombres de todas las cachés existentes
-      return Promise.all(
-        cacheNames.map((cacheName) => {
-          // Si el nombre de una caché NO es el actual (CACHE_NAME), la borramos.
-          // Esto es crucial para eliminar datos viejos cuando actualizas tu PWA
-          // y cambias la versión de CACHE_NAME.
-          if (cacheName !== CACHE_NAME) {
-            console.log('[Service Worker] Borrando caché antigua:', cacheName);
-            return caches.delete(cacheName);
-          }
-        })
-      );
-    }).then(() => {
-      console.log('[Service Worker] Cachés antiguas limpiadas. Service Worker activado y listo para tomar control.');
-      // self.clients.claim() permite a un SW activado tomar control de todos los clientes (pestañas)
-      // dentro de su alcance inmediatamente, en lugar de esperar a la próxima navegación.
-      return self.clients.claim();
-    })
-  );
-});
-
-// 5. Evento "fetch": Se dispara cada vez que la aplicación web (controlada por este SW)
-//    pide un recurso (una página, una imagen, un script, una petición a una API, etc.).
-//    Aquí decidimos si servimos el recurso desde la caché o desde la red.
-self.addEventListener('fetch', (event) => {
-  // Solo nos interesan las peticiones GET. Otras como POST, PUT, etc.,
-  // no suelen ser candidatas para cachear de esta forma simple.
-  if (event.request.method !== 'GET') {
-    // Dejamos que el navegador maneje estas peticiones normalmente.
-    return;
-  }
-
-  // Estrategia: "Cache, falling back to network" (Caché primero, si falla, ir a la red)
-  // Para los archivos de URLS_TO_CACHE, ya deberían estar en caché desde el 'install'.
-  // Para otros recursos (ej. peticiones a una API, imágenes nuevas, los JS/CSS que no precacheamos),
-  // se intentarán cachear después de pedirlos a la red.
-  event.respondWith(
-    caches.match(event.request) // Buscamos la petición actual en nuestra caché
-      .then((cachedResponse) => {
-        // Si la encontramos en caché, la devolvemos. ¡Rápido!
-        if (cachedResponse) {
-          console.log(`[Service Worker] Sirviendo desde caché: ${event.request.url}`);
-          return cachedResponse;
-        }
-
-        // Si no está en caché, la pedimos a la red.
-        console.log(`[Service Worker] Pidiendo a la red (no en caché): ${event.request.url}`);
-        return fetch(event.request).then(
-          (networkResponse) => {
-            // Una vez que tenemos la respuesta de la red, queremos hacer dos cosas:
-            // 1. Devolverla al navegador para que la página la use.
-            // 2. Guardar una copia en la caché para futuras peticiones.
-
-            // ¡Importante! Una respuesta (`Response`) solo se puede "consumir" una vez.
-            // Como queremos que el navegador la use Y que el service worker la guarde en caché,
-            // necesitamos clonarla.
-            const responseToCache = networkResponse.clone();
-
-            caches.open(CACHE_NAME)
-              .then((cache) => {
-                // Solo cacheamos respuestas válidas.
-                // networkResponse.ok significa status en el rango 200-299.
-                // networkResponse.type === 'opaque' son respuestas de terceros sin CORS.
-                // Cachearlas puede ser útil para modo offline, pero no puedes leer su contenido.
-                // Excluimos explícitamente las extensiones de Chrome, ya que no se pueden cachear y causan errores.
-                if ((networkResponse.ok || networkResponse.type === 'opaque') && !event.request.url.startsWith('chrome-extension://')) {
-                  console.log(`[Service Worker] Cacheando nueva respuesta de red: ${event.request.url}`);
-                  cache.put(event.request, responseToCache);
-                }
-              });
-
-            return networkResponse; // Devolvemos la respuesta original de la red al navegador.
-          }
-        ).catch((error) => {
-          console.error(`[Service Worker] Fallo al obtener de la red Y no estaba en caché: ${event.request.url}`, error);
-          // Aquí es donde podrías devolver una página offline genérica si quisieras.
-          // Por ejemplo: return caches.match('/offline.html');
-          // Por ahora, simplemente dejamos que el navegador maneje el error de red como lo haría normalmente.
-          // Esto significa que el usuario verá el error estándar del navegador si está offline y el recurso no está en caché.
-        });
+    // Obtener todas las claves de cache existentes
+    caches.keys()
+      .then(cacheNames => {
+        return Promise.all(
+          cacheNames.map(cacheName => {
+            // Si no es la versión actual, eliminar
+            if (cacheName !== CACHE_VERSION && cacheName.startsWith('sepam-cache-')) {
+              console.log('[SW] 🗑️ Eliminando cache antigua:', cacheName);
+              return caches.delete(cacheName);
+            }
+          })
+        );
+      })
+      .then(() => {
+        console.log('[SW] ✅ Caches antiguas limpiadas');
+        return self.clients.claim(); // Toma control de todas las pestañas
       })
   );
 });
+
+// 🌐 INTERCEPCIÓN: Estrategias inteligentes de cache
+self.addEventListener('fetch', (event) => {
+  const { request } = event;
+  const url = request.url;
+  
+  // Solo GET requests
+  if (request.method !== 'GET') return;
+  
+  // Excluir URLs específicas
+  if (CACHE_STRATEGIES.exclude.test(url)) return;
+  
+  event.respondWith(handleRequest(request, url));
+});
+
+// 🎯 FUNCIÓN PRINCIPAL: Manejar diferentes tipos de requests
+async function handleRequest(request, url) {
+  try {
+    // 1. ARCHIVOS CRÍTICOS: Cache First
+    if (CACHE_STRATEGIES.critical.test(url)) {
+      return await cacheFirst(request);
+    }
+    
+    // 2. APIs: Network First (datos frescos)
+    if (CACHE_STRATEGIES.api.test(url)) {
+      return await networkFirst(request);
+    }
+    
+    // 3. ASSETS ESTÁTICOS: Cache First con revalidación
+    if (CACHE_STRATEGIES.static.test(url)) {
+      return await cacheFirst(request, true);
+    }
+    
+    // 4. TODO LO DEMÁS: Network First
+    return await networkFirst(request);
+    
+  } catch (error) {
+    console.error('[SW] ❌ Error manejando request:', url, error);
+    
+    // Fallback para páginas HTML
+    if (request.headers.get('accept')?.includes('text/html')) {
+      const cache = await caches.open(CACHE_VERSION);
+      return await cache.match('/') || new Response('Offline', { status: 503 });
+    }
+    
+    throw error;
+  }
+}
+
+// 📱 ESTRATEGIA: Cache First
+async function cacheFirst(request, revalidate = false) {
+  const cache = await caches.open(CACHE_VERSION);
+  const cachedResponse = await cache.match(request);
+  
+  if (cachedResponse) {
+    console.log('[SW] 📱 Cache hit:', request.url);
+    
+    // Revalidar en background si se solicita
+    if (revalidate) {
+      fetch(request).then(response => {
+        if (response.ok) {
+          cache.put(request, response.clone());
+        }
+      }).catch(() => {}); // Ignore network errors
+    }
+    
+    return cachedResponse;
+  }
+  
+  // No está en cache, ir a la red
+  console.log('[SW] 🌐 Cache miss, fetching:', request.url);
+  const networkResponse = await fetch(request);
+  
+  if (networkResponse.ok) {
+    cache.put(request, networkResponse.clone());
+  }
+  
+  return networkResponse;
+}
+
+// 🌐 ESTRATEGIA: Network First
+async function networkFirst(request) {
+  try {
+    console.log('[SW] 🌐 Network first:', request.url);
+    const networkResponse = await fetch(request);
+    
+    if (networkResponse.ok) {
+      const cache = await caches.open(CACHE_VERSION);
+      cache.put(request, networkResponse.clone());
+    }
+    
+    return networkResponse;
+    
+  } catch (error) {
+    // Network falló, intentar cache
+    console.log('[SW] 📱 Network failed, trying cache:', request.url);
+    const cache = await caches.open(CACHE_VERSION);
+    const cachedResponse = await cache.match(request);
+    
+    if (cachedResponse) {
+      return cachedResponse;
+    }
+    
+    throw error;
+  }
+}
