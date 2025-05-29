@@ -11,6 +11,9 @@
   "background_color": "#ffffff",
   "lang": "es-CO",
   "dir": "ltr",
+  "launch_handler": {
+    "client_mode": "navigate-existing"
+  },
   "icons": [
     {
       "src": "/logo192.png",
@@ -35,6 +38,22 @@
       "type": "image/png",
       "sizes": "512x512",
       "purpose": "maskable"  
+    }
+  ],
+  "screenshots": [
+    {
+      "src": "/logo512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "form_factor": "narrow",
+      "label": "SEPAM - Sistema de Seguimiento"
+    },
+    {
+      "src": "/logo512.png",
+      "sizes": "512x512", 
+      "type": "image/png",
+      "form_factor": "wide",
+      "label": "SEPAM Dashboard"
     }
   ],
   "categories": ["business", "productivity"],
