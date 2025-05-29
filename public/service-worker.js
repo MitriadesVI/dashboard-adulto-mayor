@@ -1,8 +1,6 @@
-// public/service-worker.js
+// public/service-worker.js - VERSIÓN CORREGIDA
 
-// 🚀 VERSIÓN AUTOMÁTICA: Se actualiza cada vez que haces build
-// En desarrollo, cambia cada vez que modificas el archivo
-// En producción, puedes usar process.env o fecha de build
+// Versión automática 
 const CACHE_VERSION = 'sepam-cache-' + new Date().getTime();
 
 // Archivos críticos que SIEMPRE deben estar disponibles offline
@@ -15,22 +13,31 @@ const CRITICAL_URLS = [
   '/logo512.png'
 ];
 
-// 🔧 CONFIGURACIÓN: Qué cachear y qué no
-const CACHE_STRATEGIES = {
-  // Archivos críticos: Cache First (rápido, siempre disponible)
-  critical: /\/(index\.html|manifest\.json|favicon\.ico|logo.*\.png)$/,
+// 🚨 CONFIGURACIÓN CRUCIAL: URLs que NO deben cachearse NUNCA
+const NEVER_CACHE_PATTERNS = [
+  // Firebase Auth y APIs
+  /identitytoolkit\.googleapis\.com/,
+  /firebase/,
+  /firestore\.googleapis\.com/,
+  /googleapis\.com.*auth/,
   
-  // APIs Firebase: Network First (datos frescos, fallback a cache)
-  api: /firestore\.googleapis\.com|firebase/,
+  // Auth específicos
+  /\/auth\//,
+  /signInWithEmailAndPassword/,
+  /accounts:signInWithPassword/,
   
-  // Assets estáticos: Cache First con validación
-  static: /\.(js|css|png|jpg|jpeg|gif|svg|woff|woff2)$/,
-  
-  // No cachear: Auth tokens, analytics
-  exclude: /\/(auth|analytics|tracking)/
-};
+  // Otros que no deben cachearse
+  /chrome-extension/,
+  /analytics/,
+  /gtag/
+];
 
-// 📦 INSTALACIÓN: Cachear archivos críticos
+// 🔧 FUNCIÓN: Verificar si una URL NO debe cachearse
+function shouldNeverCache(url) {
+  return NEVER_CACHE_PATTERNS.some(pattern => pattern.test(url));
+}
+
+// 📦 INSTALACIÓN
 self.addEventListener('install', (event) => {
   console.log('[SW] 🚀 Instalando versión:', CACHE_VERSION);
   
@@ -42,7 +49,7 @@ self.addEventListener('install', (event) => {
       })
       .then(() => {
         console.log('[SW] ✅ Archivos críticos cacheados');
-        return self.skipWaiting(); // Activa inmediatamente
+        return self.skipWaiting();
       })
       .catch(error => {
         console.error('[SW] ❌ Error cacheando archivos críticos:', error);
@@ -50,17 +57,15 @@ self.addEventListener('install', (event) => {
   );
 });
 
-// 🧹 ACTIVACIÓN: Limpiar caches antiguos
+// 🧹 ACTIVACIÓN
 self.addEventListener('activate', (event) => {
   console.log('[SW] 🔄 Activando versión:', CACHE_VERSION);
   
   event.waitUntil(
-    // Obtener todas las claves de cache existentes
     caches.keys()
       .then(cacheNames => {
         return Promise.all(
           cacheNames.map(cacheName => {
-            // Si no es la versión actual, eliminar
             if (cacheName !== CACHE_VERSION && cacheName.startsWith('sepam-cache-')) {
               console.log('[SW] 🗑️ Eliminando cache antigua:', cacheName);
               return caches.delete(cacheName);
@@ -70,44 +75,45 @@ self.addEventListener('activate', (event) => {
       })
       .then(() => {
         console.log('[SW] ✅ Caches antiguas limpiadas');
-        return self.clients.claim(); // Toma control de todas las pestañas
+        return self.clients.claim();
       })
   );
 });
 
-// 🌐 INTERCEPCIÓN: Estrategias inteligentes de cache
+// 🌐 INTERCEPCIÓN DE REQUESTS - CON EXCLUSIONES FIREBASE
 self.addEventListener('fetch', (event) => {
   const { request } = event;
   const url = request.url;
   
   // Solo GET requests
-  if (request.method !== 'GET') return;
+  if (request.method !== 'GET') {
+    console.log('[SW] ⏭️ Ignorando request no-GET:', request.method, url);
+    return;
+  }
   
-  // Excluir URLs específicas
-  if (CACHE_STRATEGIES.exclude.test(url)) return;
+  // 🚨 NUNCA cachear Firebase Auth y APIs críticas
+  if (shouldNeverCache(url)) {
+    console.log('[SW] 🚫 NO cacheando (Firebase/Auth):', url);
+    return; // Dejar que el navegador maneje directamente
+  }
   
   event.respondWith(handleRequest(request, url));
 });
 
-// 🎯 FUNCIÓN PRINCIPAL: Manejar diferentes tipos de requests
+// 🎯 MANEJAR REQUESTS CON ESTRATEGIAS INTELIGENTES
 async function handleRequest(request, url) {
   try {
     // 1. ARCHIVOS CRÍTICOS: Cache First
-    if (CACHE_STRATEGIES.critical.test(url)) {
+    if (CRITICAL_URLS.some(criticalUrl => url.endsWith(criticalUrl))) {
       return await cacheFirst(request);
     }
     
-    // 2. APIs: Network First (datos frescos)
-    if (CACHE_STRATEGIES.api.test(url)) {
-      return await networkFirst(request);
-    }
-    
-    // 3. ASSETS ESTÁTICOS: Cache First con revalidación
-    if (CACHE_STRATEGIES.static.test(url)) {
+    // 2. ASSETS ESTÁTICOS: Cache First con revalidación
+    if (/\.(js|css|png|jpg|jpeg|gif|svg|woff|woff2|ico)$/.test(url)) {
       return await cacheFirst(request, true);
     }
     
-    // 4. TODO LO DEMÁS: Network First
+    // 3. TODO LO DEMÁS: Network First (incluye APIs no-Firebase)
     return await networkFirst(request);
     
   } catch (error) {
@@ -134,7 +140,7 @@ async function cacheFirst(request, revalidate = false) {
     // Revalidar en background si se solicita
     if (revalidate) {
       fetch(request).then(response => {
-        if (response.ok) {
+        if (response.ok && !shouldNeverCache(request.url)) {
           cache.put(request, response.clone());
         }
       }).catch(() => {}); // Ignore network errors
@@ -147,20 +153,20 @@ async function cacheFirst(request, revalidate = false) {
   console.log('[SW] 🌐 Cache miss, fetching:', request.url);
   const networkResponse = await fetch(request);
   
-  if (networkResponse.ok) {
+  if (networkResponse.ok && !shouldNeverCache(request.url)) {
     cache.put(request, networkResponse.clone());
   }
   
   return networkResponse;
 }
 
-// 🌐 ESTRATEGIA: Network First
+// 🌐 ESTRATEGIA: Network First  
 async function networkFirst(request) {
   try {
     console.log('[SW] 🌐 Network first:', request.url);
     const networkResponse = await fetch(request);
     
-    if (networkResponse.ok) {
+    if (networkResponse.ok && !shouldNeverCache(request.url)) {
       const cache = await caches.open(CACHE_VERSION);
       cache.put(request, networkResponse.clone());
     }
