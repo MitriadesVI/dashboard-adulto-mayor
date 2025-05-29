@@ -1,7 +1,16 @@
 {
+  "name": "SEPAM - Sistema de Seguimiento Programa Adulto Mayor",
   "short_name": "SEPAM",
-  "name": "SEPAM - Seguimiento Programa Adulto Mayor",
   "description": "Sistema de Seguimiento para el Programa de Adulto Mayor del Distrito de Barranquilla",
+  "start_url": "/",
+  "id": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "theme_color": "#142334",
+  "background_color": "#ffffff",
+  "lang": "es-CO",
+  "dir": "ltr",
   "icons": [
     {
       "src": "/logo192.png",
@@ -10,47 +19,24 @@
       "purpose": "any"
     },
     {
-      "src": "/logo512.png", 
-      "type": "image/png",
+      "src": "/logo512.png",
+      "type": "image/png", 
       "sizes": "512x512",
       "purpose": "any"
     },
     {
       "src": "/logo192.png",
-      "type": "image/png", 
-      "sizes": "192x192",
+      "type": "image/png",
+      "sizes": "192x192", 
       "purpose": "maskable"
     },
     {
       "src": "/logo512.png",
       "type": "image/png",
-      "sizes": "512x512", 
-      "purpose": "maskable"
+      "sizes": "512x512",
+      "purpose": "maskable"  
     }
   ],
-  "start_url": "/",
-  "id": "/",
-  "display": "standalone",
-  "display_override": ["window-controls-overlay", "standalone"],
-  "orientation": "portrait-primary",
-  "background_color": "#ffffff",
-  "theme_color": "#142334",
-  "scope": "/",
-  "lang": "es-CO",
-  "dir": "ltr",
   "categories": ["business", "productivity"],
-  "screenshots": [
-    {
-      "src": "/logo512.png",
-      "sizes": "512x512",
-      "type": "image/png",
-      "form_factor": "narrow"
-    },
-    {
-      "src": "/logo512.png", 
-      "sizes": "512x512",
-      "type": "image/png",
-      "form_factor": "wide"
-    }
-  ]
+  "prefer_related_applications": false
 }

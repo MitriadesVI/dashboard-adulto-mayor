@@ -1,0 +1,55 @@
+# netlify.toml - Configuración PWA para SEPAM
+
+[build]
+  publish = "build"
+
+# Headers específicos para PWA
+[[headers]]
+  for = "/*"
+  [headers.values]
+    X-Frame-Options = "DENY"
+    X-Content-Type-Options = "nosniff"
+    X-XSS-Protection = "1; mode=block"
+    Referrer-Policy = "same-origin"
+
+# Headers para Service Worker
+[[headers]]
+  for = "/service-worker.js"
+  [headers.values]
+    Cache-Control = "no-cache, no-store, must-revalidate"
+    Service-Worker-Allowed = "/"
+
+# Headers para Manifest
+[[headers]]
+  for = "/manifest.json"
+  [headers.values]
+    Content-Type = "application/manifest+json"
+    Cache-Control = "public, max-age=31536000"
+
+# Headers para iconos PWA
+[[headers]]
+  for = "/logo*.png"
+  [headers.values]
+    Cache-Control = "public, max-age=31536000"
+
+# Redirects para SPA (React Router)
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
+  force = false
+  conditions = {Role = []}
+
+# Asegurar que el service worker se sirve correctamente
+[[redirects]]
+  from = "/service-worker.js"
+  to = "/service-worker.js"
+  status = 200
+  force = false
+
+# Asegurar que el manifest se sirve correctamente  
+[[redirects]]
+  from = "/manifest.json"
+  to = "/manifest.json"
+  status = 200
+  force = false
