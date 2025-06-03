@@ -22,6 +22,7 @@ import LogoutIcon from '@mui/icons-material/Logout';
 import AssignmentIcon from '@mui/icons-material/Assignment';
 import AdminPanelSettingsIcon from '@mui/icons-material/AdminPanelSettings';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
+import SettingsIcon from '@mui/icons-material/Settings';
 import CloudOffIcon from '@mui/icons-material/CloudOff';
 
 const Navbar = ({ user, onLogout, offline }) => {
@@ -203,6 +204,16 @@ const Navbar = ({ user, onLogout, offline }) => {
                 {item.label}
               </MenuItem>
             ))}
+            <Divider />
+            <MenuItem onClick={() => {
+              handleMenuClose();
+              navigate('/profile');
+            }}>
+              <ListItemIcon>
+                <SettingsIcon fontSize="small" />
+              </ListItemIcon>
+              Mi Perfil
+            </MenuItem>
             <Divider />
             <MenuItem onClick={handleLogout}>
               <ListItemIcon>

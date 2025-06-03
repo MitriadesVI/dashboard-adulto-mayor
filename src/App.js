@@ -1,4 +1,4 @@
-// App.js (Código Corregido para eliminar problemas de timing)
+// App.js (Código Completo con ProfilePanel agregado)
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
@@ -14,6 +14,7 @@ import ActivitiesPage from './components/pages/ActivitiesPage';
 import ApprovalPanel from './components/approval/ApprovalPanel';
 import AdminPanel from './components/pages/AdminPanel';
 import DiagnosticPage from './components/DiagnosticPage';
+import ProfilePanel from './components/profile/ProfilePanel';
 
 // Dashboard del contratista
 import ContractorDashboard from './components/contractor/ContractorDashboard';
@@ -365,6 +366,12 @@ function App() {
             <Route path="/diagnostic" element={
               <PrivateRoute user={user} allowedRoles={['district']}>
                 <DiagnosticPage />
+              </PrivateRoute>
+            } />
+            
+            <Route path="/profile" element={
+              <PrivateRoute user={user} allowedRoles={['field', 'contractor-admin', 'district']}>
+                <ProfilePanel user={user} />
               </PrivateRoute>
             } />
             

@@ -66,15 +66,25 @@ function registerValidSW(swUrl, config) {
         installingWorker.onstatechange = () => {
           if (installingWorker.state === 'installed') {
             if (navigator.serviceWorker.controller) {
-              // En este punto, el contenido precacheado actualizado ha sido obtenido,
-              // pero el service worker anterior seguirá sirviendo el contenido más antiguo
-              // hasta que todas las pestañas del cliente estén cerradas.
-              console.log(
-                'New content is available and will be used when all ' +
-                  'tabs for this page are closed. See https://cra.link/PWA.'
-              );
+              // 🔄 NUEVA VERSIÓN DISPONIBLE - NOTIFICACIÓN SIMPLE
+              console.log('🔄 Nueva versión de SEPAM disponible');
+              
+              // Esperar un poquito para no interrumpir al usuario
+              setTimeout(() => {
+                if (window.confirm('🔄 Nueva versión de SEPAM disponible.\n\n¿Actualizar ahora? (Recomendado)')) {
+                  // Activar nueva versión inmediatamente
+                  installingWorker.postMessage({ type: 'SKIP_WAITING' });
+                  
+                  // Escuchar cuando se active
+                  navigator.serviceWorker.addEventListener('controllerchange', () => {
+                    window.location.reload();
+                  });
+                } else {
+                  console.log('ℹ️ Actualización pospuesta. Se aplicará al reiniciar la app.');
+                }
+              }, 2000); // Esperar 2 segundos
 
-              // Ejecutar callback
+              // Ejecutar callback original
               if (config && config.onUpdate) {
                 config.onUpdate(registration);
               }

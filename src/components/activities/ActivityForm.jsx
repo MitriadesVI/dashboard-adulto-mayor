@@ -1,145 +1,756 @@
-// src/components/activities/ActivityForm.jsx
+// src/components/activities/ActivityForm.jsx - VERSIÓN CORREGIDA PARA PROBLEMAS DE FOCO
 
-import React, { useState, useEffect } from 'react';
-import { 
-  Paper, Typography, Box, Grid, TextField, MenuItem, Button, 
-  CircularProgress, Snackbar, Alert, FormControl, FormLabel, 
-  RadioGroup, FormControlLabel, Radio, Link, Divider, 
-  FormGroup, Checkbox, Collapse
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import {
+  Paper, Typography, Box, Grid, TextField, MenuItem, Button,
+  CircularProgress, Snackbar, Alert, FormControl,
+  RadioGroup, FormControlLabel, Radio,
+  Checkbox, Card, CardContent, IconButton,
+  Stepper, Step, StepLabel, AppBar, Toolbar, LinearProgress,
+  Chip
 } from '@mui/material';
+
+// Iconos
 import SaveIcon from '@mui/icons-material/Save';
 import InsertDriveFileIcon from '@mui/icons-material/InsertDriveFile';
 import ArrowBackIcon from '@mui/icons-material/ArrowBack';
+import ArrowForwardIcon from '@mui/icons-material/ArrowForward';
+import CheckCircleIcon from '@mui/icons-material/CheckCircle';
+import SchoolIcon from '@mui/icons-material/School';
+import RestaurantIcon from '@mui/icons-material/Restaurant';
+import LocationOnIcon from '@mui/icons-material/LocationOn';
+import PeopleIcon from '@mui/icons-material/People';
+import DateRangeIcon from '@mui/icons-material/DateRange';
+import SendIcon from '@mui/icons-material/Send';
+
 import { useFormik } from 'formik';
 import * as Yup from 'yup';
 import activitiesService from '../../services/activitiesService';
 import localStorageService from '../../services/localStorageService';
 import locationsService from '../../services/locationsService';
 
+// ========== FUNCIONES EXTERNAS (CRÍTICO) ==========
+const getActivityTypes = (contractor) => {
+  if (!contractor) return [];
+  return [
+    { value: 'nutrition', label: contractor === 'CUC' ? 'Educación Nutricional' : 'Salud Nutricional' },
+    { value: 'physical', label: contractor === 'CUC' ? 'Educación en Salud Física' : 'Salud Física' },
+    { value: 'psychosocial', label: contractor === 'CUC' ? 'Educación Psicosocial' : 'Salud Psicosocial' },
+  ];
+};
+
+const getSubtypes = (type, contractor) => {
+  if (!contractor || !type) return [];
+  if (type === 'nutrition') {
+    return [
+      { value: 'workshop', label: contractor === 'CUC' ? 'Taller educativo del cuidado nutricional' : 'Jornada de promoción de la salud nutricional' }
+    ];
+  } else if (type === 'physical') {
+    return [
+      { value: 'prevention', label: 'Charlas de prevención de enfermedad' },
+      { value: 'therapeutic', label: 'Actividad física terapéutica' },
+      { value: 'rumba', label: 'Rumbaterapia y ejercicios dirigidos' },
+      { value: 'walking', label: 'Club de caminantes' }
+    ];
+  } else if (type === 'psychosocial') {
+    return [
+      { value: 'mental', label: 'Jornadas/talleres en salud mental' },
+      { value: 'cognitive', label: 'Jornadas/talleres cognitivos' },
+      { value: 'abuse', label: 'Talleres en prevención al maltrato' },
+      { value: 'arts', label: 'Talleres en artes y oficios' },
+      { value: 'intergenerational', label: 'Encuentros intergeneracionales' }
+    ];
+  }
+  return [];
+};
+
+// ✅ CLAVE 1: SCHEMA DE VALIDACIÓN ESTÁTICO
+const createValidationSchema = () => Yup.object({
+  date: Yup.date().required('Fecha requerida'),
+  locationName: Yup.string().required('Nombre de la ubicación requerido'),
+  locationType: Yup.string().required('Tipo de ubicación requerido'),
+  schedule: Yup.string().required('Jornada requerida'),
+  beneficiaries: Yup.number()
+    .required('Número de beneficiarios requerido')
+    .positive('Debe ser un número positivo')
+    .integer('Debe ser un número entero'),
+  driveLink: Yup.string()
+    .url('Debe ser una URL válida')
+    .nullable()
+    .transform(value => value === '' ? null : value),
+  type: Yup.string().when('includeEducational', {
+    is: true,
+    then: schema => schema.required('Tipo de actividad requerido'),
+    otherwise: schema => schema.nullable()
+  }),
+  subtype: Yup.string().when('includeEducational', {
+    is: true,
+    then: schema => schema.required('Subtipo de actividad requerido'),
+    otherwise: schema => schema.nullable()
+  }),
+  description: Yup.string().when('includeEducational', {
+    is: true,
+    then: schema => schema.required('Descripción requerida para actividades educativas').min(20, 'La descripción debe tener al menos 20 caracteres'),
+    otherwise: schema => schema.nullable()
+  }),
+  includeEducational: Yup.boolean(),
+  includeNutrition: Yup.boolean().test(
+    'at-least-one-included',
+    'Debe incluir al menos actividad educativa o entrega de alimentos',
+    function(value) {
+      return value || this.parent.includeEducational;
+    }
+  )
+});
+
+// ✅ CLAVE 2: VALORES INICIALES ESTÁTICOS
+const createInitialValues = (initialData) => ({
+  date: initialData?.date || new Date().toISOString().split('T')[0],
+  locationName: initialData?.location?.name || '',
+  locationType: initialData?.location?.type || '',
+  schedule: initialData?.schedule || 'J1',
+  beneficiaries: initialData?.totalBeneficiaries || '',
+  driveLink: initialData?.driveLink || '',
+  includeEducational: initialData?.educationalActivity?.included !== false,
+  type: initialData?.educationalActivity?.type || '',
+  subtype: initialData?.educationalActivity?.subtype || '',
+  description: initialData?.educationalActivity?.description || '',
+  includeNutrition: initialData?.nutritionDelivery?.included !== false
+});
+
+// ✅ CLAVE 3: COMPONENTES DE PASO COMO COMPONENTES EXTERNOS MEMOIZADOS
+const TypeSelectionStep = React.memo(({ formik }) => (
+  <Box sx={{ p: 3 }}>
+    <Box sx={{ textAlign: 'center', mb: 4 }}>
+      <Typography variant="h4" sx={{ mb: 1 }}>📋</Typography>
+      <Typography variant="h5" fontWeight="medium" gutterBottom>
+        ¿Qué vas a registrar?
+      </Typography>
+      <Typography variant="body2" color="text.secondary">
+        Puedes seleccionar una o ambas opciones
+      </Typography>
+    </Box>
+    <Grid container spacing={3}>
+      <Grid item xs={12}>
+        <Card
+          sx={{
+            cursor: 'pointer',
+            border: formik.values.includeEducational ? 2 : 1,
+            borderColor: formik.values.includeEducational ? 'primary.main' : 'grey.300',
+            bgcolor: formik.values.includeEducational ? 'primary.main' : 'white',
+            color: formik.values.includeEducational ? 'white' : 'inherit',
+            '&:hover': { bgcolor: formik.values.includeEducational ? 'primary.dark' : 'grey.50' },
+            transition: 'all 0.2s'
+          }}
+          onClick={() => {
+              formik.setFieldValue('includeEducational', !formik.values.includeEducational);
+              formik.setFieldTouched('includeEducational', true);
+              formik.setFieldTouched('includeNutrition', true);
+          }}
+        >
+          <CardContent sx={{ p: 3 }}>
+            <Box sx={{ display: 'flex', alignItems: 'center' }}>
+              <Checkbox
+                checked={formik.values.includeEducational}
+                sx={{ 
+                  mr: 2,
+                  color: formik.values.includeEducational ? 'white' : 'primary.main',
+                  '&.Mui-checked': { color: 'white' }
+                }}
+              />
+              <SchoolIcon sx={{ 
+                mr: 2, 
+                fontSize: 32, 
+                color: formik.values.includeEducational ? 'white' : 'primary.main' 
+              }} />
+              <Box sx={{ flexGrow: 1 }}>
+                <Typography variant="h6" fontWeight="medium">
+                  Actividad
+                </Typography>
+                <Typography 
+                  variant="body2" 
+                  sx={{ 
+                    color: formik.values.includeEducational ? 'rgba(255,255,255,0.8)' : 'text.secondary' 
+                  }}
+                >
+                  Talleres, charlas, ejercicios dirigidos
+                </Typography>
+              </Box>
+              {formik.values.includeEducational && (
+                <CheckCircleIcon sx={{ color: 'white' }} />
+              )}
+            </Box>
+          </CardContent>
+        </Card>
+      </Grid>
+
+      <Grid item xs={12}>
+        <Card
+          sx={{
+            cursor: 'pointer',
+            border: formik.values.includeNutrition ? 2 : 1,
+            borderColor: formik.values.includeNutrition ? 'secondary.main' : 'grey.300',
+            bgcolor: formik.values.includeNutrition ? 'secondary.main' : 'white',
+            color: formik.values.includeNutrition ? 'white' : 'inherit',
+            '&:hover': { bgcolor: formik.values.includeNutrition ? 'secondary.dark' : 'grey.50' },
+            transition: 'all 0.2s'
+          }}
+          onClick={() => {
+              formik.setFieldValue('includeNutrition', !formik.values.includeNutrition);
+              formik.setFieldTouched('includeNutrition', true);
+              formik.setFieldTouched('includeEducational', true);
+          }}
+        >
+          <CardContent sx={{ p: 3 }}>
+            <Box sx={{ display: 'flex', alignItems: 'center' }}>
+              <Checkbox
+                checked={formik.values.includeNutrition}
+                sx={{ 
+                  mr: 2,
+                  color: formik.values.includeNutrition ? 'white' : 'secondary.main',
+                  '&.Mui-checked': { color: 'white' }
+                }}
+              />
+              <RestaurantIcon sx={{ 
+                mr: 2, 
+                fontSize: 32, 
+                color: formik.values.includeNutrition ? 'white' : 'secondary.main' 
+              }} />
+              <Box sx={{ flexGrow: 1 }}>
+                <Typography variant="h6" fontWeight="medium">
+                  Entrega de Alimentos
+                </Typography>
+                <Typography 
+                  variant="body2" 
+                  sx={{ 
+                    color: formik.values.includeNutrition ? 'rgba(255,255,255,0.8)' : 'text.secondary' 
+                  }}
+                >
+                  Raciones alimenticias o meriendas
+                </Typography>
+              </Box>
+              {formik.values.includeNutrition && (
+                <CheckCircleIcon sx={{ color: 'white' }} />
+              )}
+            </Box>
+          </CardContent>
+        </Card>
+      </Grid>
+    </Grid>
+    {formik.touched.includeNutrition && formik.errors.includeNutrition && (
+      <Alert severity="error" sx={{ mt: 2 }}>
+        {formik.errors.includeNutrition}
+      </Alert>
+    )}
+  </Box>
+));
+
+const BasicInfoStep = React.memo(({ formik, filteredLocations, loadingLocations }) => (
+  <Box sx={{ p: 3 }}>
+    <Box sx={{ textAlign: 'center', mb: 4 }}>
+      <Typography variant="h4" sx={{ mb: 1 }}>📍</Typography>
+      <Typography variant="h5" fontWeight="medium" gutterBottom>
+        Información básica
+      </Typography>
+      <Typography variant="body2" color="text.secondary">
+        Datos generales de la actividad
+      </Typography>
+    </Box>
+    <Grid container spacing={3}>
+      <Grid item xs={12}>
+        <Card variant="outlined">
+          <CardContent>
+            <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
+              <DateRangeIcon sx={{ mr: 1, color: 'primary.main' }} />
+              <Typography variant="subtitle1" fontWeight="medium">Fecha</Typography>
+            </Box>
+            <TextField
+              key="date-field" // ✅ Key estática
+              fullWidth 
+              type="date" 
+              value={formik.values.date}
+              onChange={formik.handleChange} 
+              onBlur={formik.handleBlur} 
+              name="date"
+              error={formik.touched.date && Boolean(formik.errors.date)}
+              helperText={formik.touched.date && formik.errors.date}
+              InputLabelProps={{ shrink: true }}
+              sx={{ '& input': { fontSize: '1.1rem' } }}
+            />
+          </CardContent>
+        </Card>
+      </Grid>
+
+      <Grid item xs={12}>
+        <Card variant="outlined">
+          <CardContent>
+            <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
+              <PeopleIcon sx={{ mr: 1, color: 'primary.main' }} />
+              <Typography variant="subtitle1" fontWeight="medium">Beneficiarios</Typography>
+            </Box>
+            <TextField
+              key="beneficiaries-field" // ✅ Key estática
+              fullWidth 
+              placeholder="Número total de beneficiarios"
+              value={formik.values.beneficiaries} 
+              onChange={formik.handleChange} // ✅ Handler directo de formik
+              onBlur={formik.handleBlur} 
+              name="beneficiaries"
+              error={formik.touched.beneficiaries && Boolean(formik.errors.beneficiaries)}
+              helperText={formik.touched.beneficiaries && formik.errors.beneficiaries}
+              sx={{ '& input': { fontSize: '1.1rem' } }}
+              autoComplete="off"
+              inputProps={{ 
+                inputMode: 'numeric',
+                pattern: '[0-9]*'
+              }}
+            />
+          </CardContent>
+        </Card>
+      </Grid>
+
+      <Grid item xs={12}>
+        <Card variant="outlined">
+          <CardContent>
+            <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
+              <LocationOnIcon sx={{ mr: 1, color: 'primary.main' }} />
+              <Typography variant="subtitle1" fontWeight="medium">Ubicación</Typography>
+            </Box>
+            <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+              ¿Dónde realizaste la actividad?
+            </Typography>
+            <Grid container spacing={2}>
+              <Grid item xs={6}>
+                <Card
+                  sx={{
+                    cursor: 'pointer',
+                    border: formik.values.locationType === 'center' ? 2 : 1,
+                    borderColor: formik.values.locationType === 'center' ? 'primary.main' : 'grey.300',
+                    '&:hover': { bgcolor: 'grey.50' },
+                    transition: 'all 0.2s'
+                  }}
+                  onClick={() => {
+                    formik.setFieldValue('locationType', 'center');
+                    formik.setFieldValue('locationName', '');
+                    formik.setFieldTouched('locationType', true);
+                    formik.setFieldTouched('locationName', true);
+                  }}
+                >
+                  <CardContent sx={{ textAlign: 'center', py: 2 }}>
+                    <Typography variant="h4" sx={{ mb: 1 }}>🏢</Typography>
+                    <Typography variant="body2" fontWeight="medium">Centro de Vida</Typography>
+                  </CardContent>
+                </Card>
+              </Grid>
+              <Grid item xs={6}>
+                <Card
+                  sx={{
+                    cursor: 'pointer',
+                    border: formik.values.locationType === 'park' ? 2 : 1,
+                    borderColor: formik.values.locationType === 'park' ? 'primary.main' : 'grey.300',
+                    '&:hover': { bgcolor: 'grey.50' },
+                    transition: 'all 0.2s'
+                  }}
+                  onClick={() => {
+                    formik.setFieldValue('locationType', 'park');
+                    formik.setFieldValue('locationName', '');
+                    formik.setFieldTouched('locationType', true);
+                    formik.setFieldTouched('locationName', true);
+                  }}
+                >
+                  <CardContent sx={{ textAlign: 'center', py: 2 }}>
+                    <Typography variant="h4" sx={{ mb: 1 }}>🌳</Typography>
+                    <Typography variant="body2" fontWeight="medium">Parque/Espacio</Typography>
+                  </CardContent>
+                </Card>
+              </Grid>
+            </Grid>
+            {formik.touched.locationType && formik.errors.locationType && (
+              <Alert severity="error" sx={{ mt: 2 }}>{formik.errors.locationType}</Alert>
+            )}
+            {formik.values.locationType && (
+              <Box sx={{ mt: 3 }}>
+                <TextField
+                  key="location-name-field" // ✅ Key estática
+                  fullWidth 
+                  select 
+                  label="Selecciona el lugar específico"
+                  value={formik.values.locationName} 
+                  onChange={formik.handleChange}
+                  onBlur={formik.handleBlur} 
+                  name="locationName"
+                  error={formik.touched.locationName && Boolean(formik.errors.locationName)}
+                  helperText={formik.touched.locationName && formik.errors.locationName}
+                  disabled={loadingLocations || filteredLocations.length === 0}
+                  sx={{ '& .MuiSelect-select': { fontSize: '1.1rem' } }}
+                >
+                  {loadingLocations ? (
+                    <MenuItem disabled>Cargando ubicaciones...</MenuItem>
+                  ) : filteredLocations.length > 0 ? (
+                    filteredLocations.map((location) => (
+                      <MenuItem key={location.id} value={location.name}>
+                        {location.name}
+                      </MenuItem>
+                    ))
+                  ) : (
+                    <MenuItem disabled>
+                      No hay ubicaciones para '{formik.values.locationType === 'center' ? 'Centros de Vida' : 'Parques/Espacios'}'
+                    </MenuItem>
+                  )}
+                </TextField>
+              </Box>
+            )}
+          </CardContent>
+        </Card>
+      </Grid>
+
+      <Grid item xs={12}>
+        <Card variant="outlined">
+          <CardContent>
+            <Typography variant="subtitle1" fontWeight="medium" sx={{ mb: 2 }}>Jornada</Typography>
+            <FormControl component="fieldset" error={formik.touched.schedule && Boolean(formik.errors.schedule)}>
+              <RadioGroup
+                row 
+                name="schedule" 
+                value={formik.values.schedule}
+                onChange={formik.handleChange} 
+                onBlur={formik.handleBlur}
+              >
+                <FormControlLabel value="J1" control={<Radio />} label="J1" sx={{ mr: 3 }} />
+                <FormControlLabel
+                  value="J2" 
+                  control={<Radio />} 
+                  label="J2"
+                  disabled={formik.values.locationType === 'park'} 
+                  sx={{ mr: 3 }}
+                />
+                <FormControlLabel value="NA" control={<Radio />} label="N/A" />
+              </RadioGroup>
+              {formik.touched.schedule && formik.errors.schedule && (
+                <Typography color="error" variant="caption">{formik.errors.schedule}</Typography>
+              )}
+            </FormControl>
+          </CardContent>
+        </Card>
+      </Grid>
+    </Grid>
+  </Box>
+));
+
+const ActivityDetailsStep = React.memo(({ formik, user }) => (
+  <Box sx={{ p: 3 }}>
+    <Box sx={{ textAlign: 'center', mb: 4 }}>
+      <Typography variant="h4" sx={{ mb: 1 }}>🎓</Typography>
+      <Typography variant="h5" fontWeight="medium" gutterBottom>
+        Detalles de la actividad
+      </Typography>
+      <Typography variant="body2" color="text.secondary">
+        Información específica sobre lo realizado
+      </Typography>
+    </Box>
+
+    {formik.values.includeEducational && (
+      <Grid container spacing={3} sx={{ mb: 3 }}>
+        <Grid item xs={12}>
+          <Card variant="outlined">
+            <CardContent>
+              <Typography variant="subtitle1" fontWeight="medium" sx={{ mb: 2 }}>
+                Tipo de Actividad Educativa
+              </Typography>
+              <TextField
+                key="type-field" // ✅ Key estática
+                fullWidth 
+                select 
+                value={formik.values.type}
+                onChange={(e) => {
+                  formik.setFieldValue('type', e.target.value);
+                  formik.setFieldValue('subtype', '');
+                  formik.setFieldTouched('type', true);
+                }}
+                onBlur={() => formik.setFieldTouched('type', true)}
+                name="type"
+                error={formik.touched.type && Boolean(formik.errors.type)}
+                helperText={formik.touched.type && formik.errors.type}
+                sx={{ '& .MuiSelect-select': { fontSize: '1.1rem' } }}
+              >
+                {getActivityTypes(user?.contractor).map((option) => (
+                  <MenuItem key={option.value} value={option.value}>
+                    {option.label}
+                  </MenuItem>
+                ))}
+              </TextField>
+            </CardContent>
+          </Card>
+        </Grid>
+
+        {formik.values.type && (
+          <Grid item xs={12}>
+            <Card variant="outlined">
+              <CardContent>
+                <Typography variant="subtitle1" fontWeight="medium" sx={{ mb: 2 }}>
+                  Actividad Específica
+                </Typography>
+                <TextField
+                  key="subtype-field" // ✅ Key estática
+                  fullWidth 
+                  select 
+                  value={formik.values.subtype}
+                  onChange={formik.handleChange} 
+                  onBlur={formik.handleBlur}
+                  name="subtype"
+                  error={formik.touched.subtype && Boolean(formik.errors.subtype)}
+                  helperText={formik.touched.subtype && formik.errors.subtype}
+                  sx={{ '& .MuiSelect-select': { fontSize: '1.1rem' } }}
+                >
+                  {getSubtypes(formik.values.type, user?.contractor).map((option) => (
+                    <MenuItem key={option.value} value={option.value}>
+                      {option.label}
+                    </MenuItem>
+                  ))}
+                </TextField>
+              </CardContent>
+            </Card>
+          </Grid>
+        )}
+      </Grid>
+    )}
+
+    {formik.values.includeNutrition && (
+      <Box sx={{ mb: 3 }}>
+        <Card variant="outlined" sx={{ bgcolor: 'orange.50' }}>
+          <CardContent>
+            <Box sx={{ display: 'flex', alignItems: 'center', mb: 1 }}>
+              <RestaurantIcon sx={{ mr: 1, color: 'orange.main' }} />
+              <Typography variant="subtitle1" fontWeight="medium">
+                Entrega de Alimentos Incluida
+              </Typography>
+            </Box>
+            <Typography variant="body2" color="text.secondary">
+              {formik.values.locationType === 'center'
+                ? "Se registrará como entrega de raciones alimenticias en Centro de Vida."
+                : formik.values.locationType === 'park'
+                  ? "Se registrará como entrega de meriendas en Parque/Espacio Comunitario."
+                  : "Se registrará la entrega de alimentos según el tipo de ubicación."}
+            </Typography>
+          </CardContent>
+        </Card>
+      </Box>
+    )}
+
+    <Grid container spacing={3}>
+      <Grid item xs={12}>
+        <Card variant="outlined">
+          <CardContent>
+            <Typography variant="subtitle1" fontWeight="medium" sx={{ mb: 2 }}>
+              {formik.values.includeEducational && formik.values.includeNutrition
+                ? "Descripción de la Actividad y Observaciones"
+                : formik.values.includeEducational
+                  ? "Descripción de la Actividad Educativa"
+                  : formik.values.includeNutrition
+                    ? "Observaciones de la Entrega de Alimentos"
+                    : "Descripción y Observaciones"}
+            </Typography>
+            
+            <TextField
+              key="description-field" // ✅ Key estática CRÍTICA
+              fullWidth
+              multiline
+              rows={5}
+              name="description"
+              value={formik.values.description}
+              onChange={formik.handleChange} // ✅ Handler directo de formik
+              onBlur={formik.handleBlur}
+              placeholder={
+                formik.values.includeEducational && formik.values.includeNutrition
+                  ? "Describe detalladamente la actividad educativa realizada y cualquier observación sobre la entrega de alimentos..."
+                  : formik.values.includeEducational
+                    ? "Describe detalladamente la actividad educativa realizada: objetivos, metodología, participación, resultados..."
+                    : formik.values.includeNutrition
+                      ? "Registra observaciones sobre la entrega de alimentos: proceso, participación, incidencias, comentarios..."
+                      : "Registra cualquier observación o detalle relevante de la actividad..."
+              }
+              error={formik.touched.description && Boolean(formik.errors.description)}
+              helperText={
+                formik.touched.description && formik.errors.description
+                  ? formik.errors.description
+                  : formik.values.includeEducational
+                    ? "Mínimo 20 caracteres. Describe objetivos, desarrollo y resultados de la actividad"
+                    : "Opcional. Registra observaciones generales sobre lo realizado"
+              }
+              variant="outlined"
+              sx={{
+                '& .MuiInputBase-root': {
+                  fontSize: '1rem',
+                  lineHeight: 1.5
+                }
+              }}
+            />
+
+            {/* Contador de caracteres */}
+            <Box sx={{ display: 'flex', justifyContent: 'flex-end', mt: 1 }}>
+              <Typography 
+                variant="caption" 
+                color={(formik.values.description?.length || 0) < 20 && formik.values.includeEducational ? 'error' : 'text.secondary'}
+                sx={{ fontSize: '0.75rem' }}
+              >
+                {formik.values.description?.length || 0} caracteres
+                {formik.values.includeEducational && ` (mínimo 20)`}
+              </Typography>
+            </Box>
+          </CardContent>
+        </Card>
+      </Grid>
+    </Grid>
+
+    {!formik.values.includeEducational && (
+      <Box sx={{ mt: 2 }}>
+        <Card variant="outlined" sx={{ bgcolor: 'info.light', borderColor: 'info.main' }}>
+          <CardContent sx={{ textAlign: 'center', py: 2 }}>
+            <Typography variant="body2" component="div" color="text.primary">
+              💡 <strong>Solo entrega de alimentos:</strong> Usa la caja de arriba para registrar observaciones sobre el proceso de entrega, participación o cualquier incidencia relevante.
+            </Typography>
+          </CardContent>
+        </Card>
+      </Box>
+    )}
+  </Box>
+));
+
+const ConfirmationStep = React.memo(({ formik, user }) => (
+  <Box sx={{ p: 3 }}>
+    <Box sx={{ textAlign: 'center', mb: 4 }}>
+      <Typography variant="h4" sx={{ mb: 1 }}>✅</Typography>
+      <Typography variant="h5" fontWeight="medium" gutterBottom>
+        Confirmar y enviar
+      </Typography>
+      <Typography variant="body2" color="text.secondary">
+        Revisa los datos antes de registrar
+      </Typography>
+    </Box>
+    <Grid container spacing={2}>
+      <Grid item xs={12}>
+        <Card variant="outlined">
+          <CardContent>
+            <Typography variant="subtitle1" fontWeight="medium" sx={{ mb: 2 }}>
+              📋 Resumen de la Actividad
+            </Typography>
+            <Box sx={{ mb: 2 }}>
+              <Chip
+                label={`📅 ${formik.values.date ? new Date(formik.values.date + 'T00:00:00').toLocaleDateString() : 'Fecha no establecida'}`}
+                sx={{ mr: 1, mb: 1 }}
+              />
+              <Chip
+                label={`👥 ${formik.values.beneficiaries || 0} beneficiarios`}
+                sx={{ mr: 1, mb: 1 }}
+              />
+              <Chip
+                label={`📍 ${formik.values.locationName || 'Ubicación no establecida'}`}
+                sx={{ mr: 1, mb: 1 }}
+              />
+              <Chip
+                label={`🕐 ${formik.values.schedule || 'N/A'}`}
+                sx={{ mr: 1, mb: 1 }}
+              />
+            </Box>
+            {formik.values.includeEducational && (
+              <Box sx={{ mb: 2, p: 2, bgcolor: 'primary.light', borderRadius: 1 }}>
+                <Typography variant="body2" fontWeight="medium">🎓 Actividad Educativa:</Typography>
+                <Typography variant="body2">
+                  Tipo: {getActivityTypes(user?.contractor).find(t => t.value === formik.values.type)?.label || 'No especificado'}
+                </Typography>
+                <Typography variant="body2" sx={{mt: 0.5}}>
+                  Subtipo: {getSubtypes(formik.values.type, user?.contractor).find(s => s.value === formik.values.subtype)?.label || 'No especificado'}
+                </Typography>
+              </Box>
+            )}
+            {formik.values.description && (
+              <Box sx={{ mb: 2, p: 2, bgcolor: formik.values.includeEducational ? 'grey.100' : 'primary.light', borderRadius: 1 }}>
+                 <Typography variant="body2" fontWeight="medium">
+                   📝 {formik.values.includeEducational ? 'Descripción / Observaciones:' : 'Observaciones:'}
+                 </Typography>
+                 <Typography variant="body2" sx={{mt: 0.5, whiteSpace: 'pre-wrap'}}>
+                   {formik.values.description}
+                 </Typography>
+              </Box>
+            )}
+            {formik.values.includeNutrition && (
+              <Box sx={{ mb: 2, p: 2, bgcolor: 'secondary.light', borderRadius: 1 }}>
+                <Typography variant="body2" fontWeight="medium">🍽️ Entrega de Alimentos:</Typography>
+                <Typography variant="body2">
+                  {formik.values.locationType === 'center'
+                    ? 'Raciones alimenticias en Centro de Vida'
+                    : formik.values.locationType === 'park'
+                      ? 'Meriendas en Parque/Espacio Comunitario'
+                      : 'Entrega de alimentos (tipo de lugar no especificado)'}
+                </Typography>
+              </Box>
+            )}
+          </CardContent>
+        </Card>
+      </Grid>
+      <Grid item xs={12}>
+        <Card variant="outlined">
+          <CardContent>
+            <Typography variant="subtitle1" fontWeight="medium" sx={{ mb: 2 }}>
+              📎 Evidencias (Opcional)
+            </Typography>
+            <TextField
+              key="drive-link-field" // ✅ Key estática
+              fullWidth 
+              placeholder="https://drive.google.com/drive/folders/..."
+              value={formik.values.driveLink} 
+              onChange={formik.handleChange}
+              onBlur={formik.handleBlur} 
+              name="driveLink"
+              error={formik.touched.driveLink && Boolean(formik.errors.driveLink)}
+              helperText={(formik.touched.driveLink && formik.errors.driveLink) || "Enlace a carpeta de Google Drive con evidencias"}
+              InputProps={{
+                startAdornment: formik.values.driveLink && (
+                  <InsertDriveFileIcon color="primary" sx={{ mr: 1 }} />
+                ),
+                sx: { fontSize: '1.1rem' }
+              }}
+            />
+          </CardContent>
+        </Card>
+      </Grid>
+    </Grid>
+  </Box>
+));
+
+// ========== COMPONENTE PRINCIPAL ==========
 const ActivityForm = ({ user, onSuccess, initialData, onCancel }) => {
-  // Estado
   const [loading, setLoading] = useState(false);
+  const [currentStep, setCurrentStep] = useState(0);
   const [snackbar, setSnackbar] = useState({
     open: false,
     message: '',
     severity: 'success'
   });
 
-  // Estado para gestionar ubicaciones
   const [locations, setLocations] = useState([]);
-  const [filteredLocations, setFilteredLocations] = useState([]);
   const [loadingLocations, setLoadingLocations] = useState(false);
-  
-  // Obtener los datos para selects
-  const getActivityTypes = () => {
-    if (!user || !user.contractor) return [];
-    
-    return [
-      { value: 'nutrition', label: user.contractor === 'CUC' ? 'Educación Nutricional' : 'Salud Nutricional' },
-      { value: 'physical', label: user.contractor === 'CUC' ? 'Educación en Salud Física' : 'Salud Física' },
-      { value: 'psychosocial', label: user.contractor === 'CUC' ? 'Educación Psicosocial' : 'Salud Psicosocial' },
-    ];
-  };
 
-  const getSubtypes = (type) => {
-    if (!user || !user.contractor || !type) return [];
-    
-    if (type === 'nutrition') {
-      return [
-        { value: 'workshop', label: user.contractor === 'CUC' ? 'Taller educativo del cuidado nutricional' : 'Jornada de promoción de la salud nutricional' }
-      ];
-    } else if (type === 'physical') {
-      return [
-        { value: 'prevention', label: 'Charlas de prevención de enfermedad' },
-        { value: 'therapeutic', label: 'Actividad física terapéutica' },
-        { value: 'rumba', label: 'Rumbaterapia y ejercicios dirigidos' },
-        { value: 'walking', label: 'Club de caminantes' }
-      ];
-    } else if (type === 'psychosocial') {
-      return [
-        { value: 'mental', label: 'Jornadas/talleres en salud mental' },
-        { value: 'cognitive', label: 'Jornadas/talleres cognitivos' },
-        { value: 'abuse', label: 'Talleres en prevención al maltrato' },
-        { value: 'arts', label: 'Talleres en artes y oficios' },
-        { value: 'intergenerational', label: 'Encuentros intergeneracionales' }
-      ];
-    }
-    return [];
-  };
+  const steps = [
+    { label: 'Tipo', icon: '📋' },
+    { label: 'Básico', icon: '📍' },
+    { label: 'Actividad', icon: '🎓' },
+    { label: 'Confirmar', icon: '✅' }
+  ];
 
-  // Inicializar formik
+  // ✅ CLAVE 4: MEMOIZAR SCHEMA Y VALORES INICIALES
+  const validationSchema = useMemo(() => createValidationSchema(), []);
+  const initialValues = useMemo(() => createInitialValues(initialData), [initialData]);
+
   const formik = useFormik({
-    initialValues: {
-      date: initialData?.date || new Date().toISOString().split('T')[0],
-      locationName: initialData?.location?.name || '',
-      locationType: initialData?.location?.type || '',
-      schedule: initialData?.schedule || 'J1',
-      beneficiaries: initialData?.totalBeneficiaries || '',
-      driveLink: initialData?.driveLink || '',
-      
-      // Campos para actividad educativa
-      includeEducational: initialData?.educationalActivity?.included !== false,
-      type: initialData?.educationalActivity?.type || '',
-      subtype: initialData?.educationalActivity?.subtype || '',
-      description: initialData?.educationalActivity?.description || '',
-      
-      // Campos para entrega de alimentación
-      includeNutrition: initialData?.nutritionDelivery?.included !== false
-    },
-    validationSchema: Yup.object({
-      date: Yup.date().required('Fecha requerida'),
-      locationName: Yup.string().required('Nombre de la ubicación requerido'),
-      locationType: Yup.string().required('Tipo de ubicación requerido'),
-      schedule: Yup.string().required('Jornada requerida'),
-      beneficiaries: Yup.number()
-        .required('Número de beneficiarios requerido')
-        .positive('Debe ser un número positivo')
-        .integer('Debe ser un número entero'),
-      driveLink: Yup.string()
-        .url('Debe ser una URL válida')
-        .nullable()
-        .transform(value => value === '' ? null : value),
-        
-      // Validaciones para actividad educativa (condicionales)
-      // CORRECCIÓN: manera correcta de usar when() con Yup
-      type: Yup.string().when('includeEducational', {
-        is: true,
-        then: schema => schema.required('Tipo de actividad requerido'),
-        otherwise: schema => schema.nullable()
-      }),
-      subtype: Yup.string().when('includeEducational', {
-        is: true,
-        then: schema => schema.required('Subtipo de actividad requerido'),
-        otherwise: schema => schema.nullable()
-      }),
-      description: Yup.string().when('includeEducational', {
-        is: true,
-        then: schema => schema.required('Descripción requerida').min(20, 'La descripción debe tener al menos 20 caracteres'),
-        otherwise: schema => schema.nullable()
-      }),
-      
-      // Asegurar que al menos una opción esté seleccionada
-      includeEducational: Yup.boolean(),
-      includeNutrition: Yup.boolean().test(
-        'at-least-one-included',
-        'Debe incluir al menos actividad educativa o entrega de alimentos',
-        function(value) {
-          return value || this.parent.includeEducational;
-        }
-      )
-    }),
+    initialValues,
+    validationSchema,
+    enableReinitialize: false, // ✅ CRÍTICO: No reinicializar
     onSubmit: async (values) => {
       if (!user) return;
-      
       setLoading(true);
       try {
-        // Coordenadas por defecto si no se capturan por GPS
-        const defaultLocation = {
-          lat: 10.963889, // Barranquilla
-          lng: -74.796387
-        };
-
-        // Estructura de datos actualizada
+        const defaultLocation = { lat: 10.963889, lng: -74.796387 };
         const activityData = {
           date: values.date,
           contractor: user.contractor,
@@ -149,25 +760,20 @@ const ActivityForm = ({ user, onSuccess, initialData, onCancel }) => {
             coordinates: defaultLocation
           },
           totalBeneficiaries: Number(values.beneficiaries),
-          
-          // Datos de actividad educativa
           educationalActivity: {
             included: values.includeEducational,
             type: values.includeEducational ? values.type : null,
             subtype: values.includeEducational ? values.subtype : null,
             description: values.includeEducational ? values.description : null
           },
-          
-          // Datos de entrega de alimentación
           nutritionDelivery: {
             included: values.includeNutrition,
-            type: values.includeNutrition ? 
+            type: values.includeNutrition ?
               (values.locationType === 'center' ? 'centerRation' : 'parkSnack') : null,
-            description: values.includeNutrition ? 
+            description: values.includeNutrition ?
               `Entrega de ${values.locationType === 'center' ? 'raciones alimenticias' : 'meriendas'} a los beneficiarios` : null
           },
-          
-          // Otros campos
+          generalObservations: !values.includeEducational && values.description ? values.description : null,
           schedule: values.schedule || 'J1',
           driveLink: values.driveLink || null,
           createdBy: {
@@ -184,11 +790,9 @@ const ActivityForm = ({ user, onSuccess, initialData, onCancel }) => {
           await activitiesService.createActivity(activityData);
           setSnackbar({ open: true, message: 'Actividad registrada correctamente', severity: 'success' });
         }
-        
         formik.resetForm();
         localStorageService.clearFormDraft();
         if (onSuccess) onSuccess();
-
       } catch (error) {
         console.error('Error al registrar actividad:', error);
         setSnackbar({ open: true, message: 'Error al registrar actividad. Verifique los datos o la conexión.', severity: 'error' });
@@ -198,522 +802,310 @@ const ActivityForm = ({ user, onSuccess, initialData, onCancel }) => {
     }
   });
 
-  // Efecto para cargar ubicaciones
+  // ✅ CLAVE 5: MEMOIZAR UBICACIONES FILTRADAS
+  const filteredLocations = useMemo(() => {
+    const locationType = formik.values.locationType;
+    if (!locationType) return locations;
+    return locations.filter(loc => loc?.type === locationType);
+  }, [locations, formik.values.locationType]);
+
+  // ✅ CLAVE 6: CARGAR UBICACIONES SIN DEPENDENCIAS PROBLEMÁTICAS
   useEffect(() => {
     const loadLocations = async () => {
-      if (!user || !user.contractor) return;
-      
+      if (!user?.contractor) return;
       setLoadingLocations(true);
       try {
-        // Cargar ubicaciones asignadas al contratista del usuario
         const contractorLocations = await locationsService.getLocationsByContractor(user.contractor);
         setLocations(contractorLocations);
-        
-        // Filtrar inicialmente según el tipo seleccionado (si hay alguno)
-        if (formik.values.locationType) {
-          setFilteredLocations(
-            contractorLocations.filter(loc => loc.type === formik.values.locationType)
-          );
-        } else {
-          setFilteredLocations(contractorLocations);
-        }
       } catch (error) {
         console.error("Error al cargar ubicaciones:", error);
-        setSnackbar({
-          open: true,
-          message: "Error al cargar ubicaciones. Los campos de ubicación podrían no estar disponibles.",
-          severity: "error"
-        });
+        setSnackbar({ open: true, message: "Error al cargar ubicaciones.", severity: "error" });
       } finally {
         setLoadingLocations(false);
       }
     };
-    
     loadLocations();
-  }, [user, formik.values.locationType]);
+  }, [user?.contractor]);
 
-  // Efecto para filtrar ubicaciones cuando cambia el tipo
-  useEffect(() => {
-    if (formik.values.locationType && locations.length > 0) {
-      setFilteredLocations(
-        locations.filter(loc => loc.type === formik.values.locationType)
-      );
-    } else {
-      setFilteredLocations(locations);
+  // ✅ CLAVE 7: HANDLERS OPTIMIZADOS SIN DEPENDENCIAS PROBLEMÁTICAS
+  const canProceedToNextStep = useCallback(() => {
+    switch (currentStep) {
+      case 0:
+        return (formik.values.includeEducational || formik.values.includeNutrition) && !formik.errors.includeNutrition;
+      case 1:
+        return formik.values.date && formik.values.beneficiaries &&
+               formik.values.locationName && formik.values.locationType &&
+               !formik.errors.date && !formik.errors.beneficiaries &&
+               !formik.errors.locationName && !formik.errors.locationType &&
+               !formik.errors.schedule;
+      case 2:
+        if (!formik.values.includeEducational) return !formik.errors.description;
+        return formik.values.type && formik.values.subtype && !formik.errors.description &&
+               !formik.errors.type && !formik.errors.subtype;
+      case 3:
+        return formik.isValid;
+      default:
+        return false;
     }
-  }, [formik.values.locationType, locations]);
+  }, [currentStep, formik.values, formik.errors, formik.isValid]);
 
-  // Efecto para cargar datos de borrador
-  useEffect(() => {
-    if (!initialData && user) {
-      const draft = localStorageService.getFormDraft();
-      if (draft && draft.formValues) {
-        formik.setValues(draft.formValues);
-        setSnackbar({ open: true, message: 'Borrador restaurado', severity: 'info' });
-      }
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [initialData, user]); 
+  const nextStep = useCallback(() => {
+    if (currentStep < steps.length - 1) setCurrentStep(currentStep + 1);
+  }, [currentStep, steps.length]);
 
-  // Efecto para guardar borradores automáticamente
-  useEffect(() => {
-    let saveTimeout;
-    if (formik.dirty && user) {
-      saveTimeout = setTimeout(() => {
-        localStorageService.saveFormDraft({
-          formValues: formik.values
-        });
-        
-        setSnackbar({ open: true, message: 'Borrador guardado automáticamente', severity: 'info' });
-      }, 3000); 
-    }
-    return () => clearTimeout(saveTimeout);
-  }, [formik.values, formik.dirty, user]);
+  const prevStep = useCallback(() => {
+    if (currentStep > 0) setCurrentStep(currentStep - 1);
+  }, [currentStep]);
 
-  const handleCloseSnackbar = (event, reason) => {
-    if (reason === 'clickaway') {
-      return;
-    }
+  const handleCloseSnackbar = useCallback((event, reason) => {
+    if (reason === 'clickaway') return;
     setSnackbar(prev => ({ ...prev, open: false }));
-  };
+  }, []);
 
-  // Return condicional, después de que TODOS los hooks fueron llamados
+  // ✅ CLAVE 8: HANDLER SIMPLIFICADO PARA NAVEGACIÓN
+  const handleNextStep = useCallback(async () => {
+    try {
+      const errors = await formik.validateForm();
+      
+      const fieldsToTouch = [];
+      if (currentStep === 0) fieldsToTouch.push('includeEducational', 'includeNutrition');
+      if (currentStep === 1) fieldsToTouch.push('date', 'beneficiaries', 'locationType', 'locationName', 'schedule');
+      if (currentStep === 2) {
+        if (formik.values.includeEducational) fieldsToTouch.push('type', 'subtype');
+        fieldsToTouch.push('description');
+      }
+      
+      fieldsToTouch.forEach(field => {
+        formik.setFieldTouched(field, true, false);
+      });
+      
+      if (canProceedToNextStep()) {
+        nextStep();
+      } else {
+        setSnackbar({
+          open: true,
+          message: 'Completa los campos requeridos para continuar.',
+          severity: 'warning'
+        });
+      }
+    } catch (error) {
+      console.error('Error en navegación:', error);
+      setSnackbar({
+        open: true,
+        message: 'Error al validar formulario.',
+        severity: 'error'
+      });
+    }
+  }, [currentStep, formik, canProceedToNextStep, nextStep]);
+
+  // ✅ CLAVE 9: MEMOIZAR CONTENIDO DE PASOS
+  const stepContent = useMemo(() => {
+    switch (currentStep) {
+      case 0: 
+        return <TypeSelectionStep formik={formik} />;
+      case 1: 
+        return <BasicInfoStep formik={formik} filteredLocations={filteredLocations} loadingLocations={loadingLocations} />;
+      case 2: 
+        return <ActivityDetailsStep formik={formik} user={user} />;
+      case 3: 
+        return <ConfirmationStep formik={formik} user={user} />;
+      default: 
+        return null;
+    }
+  }, [currentStep, formik, filteredLocations, loadingLocations, user]);
+
   if (!user || !user.contractor) {
     return (
       <Paper elevation={3} sx={{ p: 3, mb: 4, textAlign: 'center' }}>
-        <Typography variant="h6" gutterBottom>Cargando datos del formulario...</Typography>
         <CircularProgress />
-        <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
-          Asegúrese de haber iniciado sesión y que su perfil esté completo.
+        <Typography variant="h6" sx={{ mt: 2 }}>
+          Cargando formulario...
         </Typography>
       </Paper>
     );
   }
 
-  // El JSX principal del componente
   return (
-    <Paper elevation={3} sx={{ p: 2, mb: 4 }}>
-      {/* Encabezado con botón de regreso para móvil */}
-      <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
-        {onCancel && (
-          <Button
-            startIcon={<ArrowBackIcon />}
-            onClick={onCancel}
-            sx={{ mr: 2 }}
-          >
-            Volver
-          </Button>
-        )}
-        <Typography variant="h5" component="h1">
-          {initialData ? 'Editar' : 'Nueva'} Actividad
-        </Typography>
-      </Box>
-      
-      <Divider sx={{ mb: 3 }} />
-      
-      <Box sx={{ mb: 3 }}>
-        <Typography variant="subtitle2" color="text.secondary">
-          Complete todos los campos requeridos. Los enlaces a Google Drive son opcionales.
-        </Typography>
-      </Box>
-      
-      <form onSubmit={formik.handleSubmit}>
-        <Grid container spacing={3}>
-          {/* SECCIÓN: TIPO DE REGISTRO */}
-          <Grid item xs={12}>
-            <Typography variant="subtitle1" fontWeight="medium" gutterBottom sx={{ mb: 1 }}>
-              Tipo de Registro
+    <Box sx={{ maxWidth: 'md', mx: 'auto', pb: 15 }}>
+      {/* Header fijo con progreso */}
+      <AppBar position="sticky" color="primary" elevation={1}>
+        <Toolbar>
+          {onCancel && (
+            <IconButton edge="start" color="inherit" onClick={onCancel} sx={{ mr: 2 }}>
+              <ArrowBackIcon />
+            </IconButton>
+          )}
+          <Box sx={{ flexGrow: 1 }}>
+            <Typography variant="h6">
+              {initialData ? 'Editar' : 'Nueva'} Actividad
             </Typography>
-            <FormGroup row>
-              <FormControlLabel
-                control={
-                  <Checkbox
-                    checked={formik.values.includeEducational}
-                    onChange={formik.handleChange}
-                    name="includeEducational"
-                    color="primary"
-                  />
-                }
-                label="Incluye actividad educativa"
-              />
-              <FormControlLabel
-                control={
-                  <Checkbox
-                    checked={formik.values.includeNutrition}
-                    onChange={formik.handleChange}
-                    name="includeNutrition"
-                    color="secondary"
-                  />
-                }
-                label="Incluye entrega de alimentos"
-              />
-            </FormGroup>
-            {formik.errors.includeNutrition && formik.touched.includeNutrition && (
-              <Typography color="error" variant="caption">
-                {formik.errors.includeNutrition}
-              </Typography>
-            )}
-          </Grid>
-          
-          {/* SECCIÓN: INFORMACIÓN BÁSICA */}
-          <Grid item xs={12}>
-            <Typography variant="subtitle1" fontWeight="medium" gutterBottom sx={{ mb: 1 }}>
-              Información básica
+            <Typography variant="caption" sx={{ opacity: 0.8 }}>
+              {user.contractor} - {user.name}
             </Typography>
-          </Grid>
-          
-          <Grid item xs={12} sm={6}>
-            <TextField
+          </Box>
+        </Toolbar>
+        <LinearProgress
+          variant="determinate"
+          value={(currentStep + 1) / steps.length * 100}
+          sx={{ height: 4 }}
+        />
+      </AppBar>
+
+      {/* Stepper */}
+      <Paper sx={{ mb: 2 }}>
+        <Stepper activeStep={currentStep} alternativeLabel>
+          {steps.map((step, index) => (
+            <Step key={step.label} completed={currentStep > index && formik.isValid}>
+              <StepLabel error={currentStep === index && !canProceedToNextStep() && Object.values(formik.touched).some(Boolean) && Object.keys(formik.errors).length > 0}>
+                <Box sx={{ display: { xs: 'none', sm: 'block' } }}>
+                  {step.label}
+                </Box>
+                <Typography sx={{ display: { xs: 'block', sm: 'none' } }}>
+                  {step.icon}
+                </Typography>
+              </StepLabel>
+            </Step>
+          ))}
+        </Stepper>
+      </Paper>
+
+      {/* ✅ CLAVE 10: CONTENIDO CON KEY ESTÁTICA */}
+      <Paper elevation={2}>
+        <form onSubmit={formik.handleSubmit}>
+          <Box key={`form-step-${currentStep}`}>
+            {stepContent}
+          </Box>
+        </form>
+      </Paper>
+
+      {/* BOTONES DE NAVEGACIÓN */}
+      <Paper
+        sx={{
+          position: 'fixed',
+          bottom: 0,
+          left: 0,
+          right: 0,
+          p: { xs: 1.5, sm: 2 },
+          zIndex: 1000
+        }}
+        elevation={8}
+      >
+        <Grid container spacing={1} sx={{ maxWidth: 'md', mx: 'auto' }}>
+          <Grid item xs={12} sm={3}>
+            <Button
               fullWidth
-              id="date"
-              name="date"
-              type="date"
-              label="Fecha de Actividad"
-              value={formik.values.date}
-              onChange={formik.handleChange}
-              onBlur={formik.handleBlur}
-              error={formik.touched.date && Boolean(formik.errors.date)}
-              helperText={formik.touched.date && formik.errors.date}
-              InputLabelProps={{ shrink: true }}
-              inputProps={{ style: { fontSize: '1rem' } }}
-            />
-          </Grid>
-          
-          <Grid item xs={12} sm={6}>
-            <TextField
-              fullWidth
-              id="beneficiaries"
-              name="beneficiaries"
-              type="number"
-              label="Número Total de Beneficiarios"
-              value={formik.values.beneficiaries}
-              onChange={formik.handleChange}
-              onBlur={formik.handleBlur}
-              error={formik.touched.beneficiaries && Boolean(formik.errors.beneficiaries)}
-              helperText={formik.touched.beneficiaries && formik.errors.beneficiaries}
-              inputProps={{ style: { fontSize: '1rem' } }}
-            />
-          </Grid>
-          
-          {/* SECCIÓN: UBICACIÓN */}
-          <Grid item xs={12} sx={{ mt: 2 }}>
-            <Divider />
-            <Typography variant="subtitle1" fontWeight="medium" gutterBottom sx={{ mt: 2, mb: 1 }}>
-              Ubicación y horario
-            </Typography>
-          </Grid>
-          
-          <Grid item xs={12}>
-            <TextField
-              fullWidth
-              id="locationType"
-              name="locationType"
-              select
-              label="Tipo de Ubicación"
-              value={formik.values.locationType}
-              onChange={formik.handleChange}
-              onBlur={formik.handleBlur}
-              error={formik.touched.locationType && Boolean(formik.errors.locationType)}
-              helperText={formik.touched.locationType && formik.errors.locationType}
-              InputProps={{ sx: { fontSize: '1rem' } }}
-            >
-              <MenuItem value="center">Centro de Vida Fijo</MenuItem>
-              <MenuItem value="park">Parque/Espacio Comunitario</MenuItem>
-            </TextField>
-          </Grid>
-          
-          <Grid item xs={12}>
-            <TextField
-              fullWidth
-              id="locationName"
-              name="locationName"
-              select
-              label="Nombre del Lugar"
-              value={formik.values.locationName}
-              onChange={formik.handleChange}
-              onBlur={formik.handleBlur}
-              error={formik.touched.locationName && Boolean(formik.errors.locationName)}
-              helperText={
-                (formik.touched.locationName && formik.errors.locationName) || 
-                (filteredLocations.length === 0 && !loadingLocations && formik.values.locationType 
-                  ? `No hay ubicaciones disponibles para ${user.contractor} de tipo ${formik.values.locationType === 'center' ? 'Centro de Vida' : 'Parque/Espacio'}. Contacte al administrador.` 
-                  : '')
-              }
-              InputProps={{ sx: { fontSize: '1rem' } }}
-              disabled={!formik.values.locationType || loadingLocations || filteredLocations.length === 0}
-            >
-              {loadingLocations ? (
-                <MenuItem value="" disabled>
-                  Cargando ubicaciones...
-                </MenuItem>
-              ) : filteredLocations.length > 0 ? (
-                filteredLocations.map((location) => (
-                  <MenuItem key={location.id} value={location.name}>
-                    {location.name}
-                  </MenuItem>
-                ))
-              ) : (
-                <MenuItem value="" disabled>
-                  {formik.values.locationType
-                    ? "No hay ubicaciones disponibles"
-                    : "Seleccione primero un tipo de ubicación"}
-                </MenuItem>
-              )}
-            </TextField>
-          </Grid>
-          
-          <Grid item xs={12}>
-            <FormControl component="fieldset" sx={{ mb: 2 }}>
-              <FormLabel component="legend">Jornada</FormLabel>
-              <RadioGroup
-                row
-                name="schedule"
-                value={formik.values.schedule}
-                onChange={formik.handleChange}
-                onBlur={formik.handleBlur}
-              >
-                <FormControlLabel 
-                  value="J1" 
-                  control={<Radio />} 
-                  label="J1" 
-                  sx={{ '& .MuiFormControlLabel-label': { fontSize: '1rem' } }} 
-                />
-                <FormControlLabel 
-                  value="J2" 
-                  control={<Radio />} 
-                  label="J2" 
-                  disabled={formik.values.locationType === 'park'} 
-                  sx={{ '& .MuiFormControlLabel-label': { fontSize: '1rem' } }} 
-                />
-                <FormControlLabel 
-                  value="NA" 
-                  control={<Radio />} 
-                  label="N/A" 
-                  sx={{ '& .MuiFormControlLabel-label': { fontSize: '1rem' } }} 
-                />
-              </RadioGroup>
-            </FormControl>
-          </Grid>
-          
-          {/* SECCIÓN: ACTIVIDAD EDUCATIVA */}
-          <Grid item xs={12} sx={{ mt: 2 }}>
-            <Divider />
-            <Typography variant="subtitle1" fontWeight="medium" gutterBottom sx={{ mt: 2, mb: 1 }}>
-              Actividad Educativa
-            </Typography>
-          </Grid>
-          
-          <Grid item xs={12}>
-            <Collapse in={formik.values.includeEducational}>
-              <Grid container spacing={3}>
-                <Grid item xs={12}>
-                  <TextField
-                    fullWidth
-                    id="type"
-                    name="type"
-                    select
-                    label="Tipo de Actividad"
-                    value={formik.values.type}
-                    onChange={(e) => {
-                      formik.setFieldValue('type', e.target.value);
-                      formik.setFieldValue('subtype', '');
-                    }}
-                    error={formik.touched.type && Boolean(formik.errors.type)}
-                    helperText={formik.touched.type && formik.errors.type}
-                    InputProps={{ sx: { fontSize: '1rem' } }}
-                  >
-                    {getActivityTypes().map((option) => (
-                      <MenuItem key={option.value} value={option.value}>
-                        {option.label}
-                      </MenuItem>
-                    ))}
-                  </TextField>
-                </Grid>
-                
-                <Grid item xs={12}>
-                  <TextField
-                    fullWidth
-                    id="subtype"
-                    name="subtype"
-                    select
-                    label="Actividad Específica"
-                    value={formik.values.subtype}
-                    onChange={formik.handleChange}
-                    onBlur={formik.handleBlur}
-                    error={formik.touched.subtype && Boolean(formik.errors.subtype)}
-                    helperText={formik.touched.subtype && formik.errors.subtype}
-                    disabled={!formik.values.type}
-                    InputProps={{ sx: { fontSize: '1rem' } }}
-                  >
-                    {getSubtypes(formik.values.type).map((option) => (
-                      <MenuItem key={option.value} value={option.value}>
-                        {option.label}
-                      </MenuItem>
-                    ))}
-                  </TextField>
-                </Grid>
-                
-                <Grid item xs={12}>
-                  <TextField
-                    fullWidth
-                    id="description"
-                    name="description"
-                    label="Descripción de la Actividad"
-                    multiline
-                    rows={4}
-                    value={formik.values.description}
-                    onChange={formik.handleChange}
-                    onBlur={formik.handleBlur}
-                    error={formik.touched.description && Boolean(formik.errors.description)}
-                    helperText={formik.touched.description && formik.errors.description}
-                    InputProps={{ sx: { fontSize: '1rem' } }}
-                  />
-                </Grid>
-              </Grid>
-            </Collapse>
-            
-            {!formik.values.includeEducational && (
-              <Typography variant="body2" color="text.secondary">
-                No se ha incluido actividad educativa en este registro.
-              </Typography>
-            )}
-          </Grid>
-          
-          {/* SECCIÓN: ENTREGA DE ALIMENTOS */}
-          <Grid item xs={12} sx={{ mt: 2 }}>
-            <Divider />
-            <Typography variant="subtitle1" fontWeight="medium" gutterBottom sx={{ mt: 2, mb: 1 }}>
-              Entrega de Alimentos
-            </Typography>
-          </Grid>
-          
-          <Grid item xs={12}>
-            <Collapse in={formik.values.includeNutrition}>
-              <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-                {formik.values.locationType === 'center' 
-                  ? "Se registrará como entrega de raciones alimenticias en Centro de Vida." 
-                  : formik.values.locationType === 'park'
-                    ? "Se registrará como entrega de meriendas en Parque/Espacio Comunitario."
-                    : "Seleccione un tipo de ubicación para especificar el tipo de entrega."}
-              </Typography>
-            </Collapse>
-            
-            {!formik.values.includeNutrition && (
-              <Typography variant="body2" color="text.secondary">
-                No se ha incluido entrega de alimentos en este registro.
-              </Typography>
-            )}
-          </Grid>
-          
-          {/* Campo para enlace de Google Drive */}
-          <Grid item xs={12} sx={{ mt: 2 }}>
-            <Divider />
-            <Typography variant="subtitle1" fontWeight="medium" gutterBottom sx={{ mt: 2, mb: 1 }}>
-              Evidencias
-            </Typography>
-          </Grid>
-          
-          <Grid item xs={12}>
-            <TextField
-              fullWidth
-              id="driveLink"
-              name="driveLink"
-              label="Enlace de Google Drive con evidencias"
-              placeholder="https://drive.google.com/drive/folders/..."
-              value={formik.values.driveLink}
-              onChange={formik.handleChange}
-              onBlur={formik.handleBlur}
-              error={formik.touched.driveLink && Boolean(formik.errors.driveLink)}
-              helperText={formik.touched.driveLink && formik.errors.driveLink 
-                ? formik.errors.driveLink 
-                : "Incluya un enlace a su carpeta de Drive con las evidencias fotográficas"}
-              InputProps={{
-                startAdornment: formik.values.driveLink ? (
-                  <InsertDriveFileIcon color="primary" style={{ marginRight: 8 }} />
-                ) : null,
-                endAdornment: formik.values.driveLink ? (
-                  <Link 
-                    href={formik.values.driveLink} 
-                    target="_blank" 
-                    rel="noopener noreferrer"
-                    sx={{ ml: 1, fontSize: '0.85rem' }}
-                  >
-                    Abrir Drive
-                  </Link>
-                ) : null,
-                sx: { fontSize: '1rem' }
+              variant="outlined"
+              onClick={prevStep}
+              disabled={currentStep === 0}
+              startIcon={<ArrowBackIcon />}
+              size={window.innerWidth < 600 ? "small" : "medium"}
+              sx={{ 
+                minHeight: { xs: '40px', sm: '48px' },
+                fontSize: { xs: '0.8rem', sm: '0.875rem' }
               }}
-            />
+            >
+              Atrás
+            </Button>
           </Grid>
-          
-          {/* BOTONES DE ACCIÓN */}
-          <Grid item xs={12} sx={{ mt: 4 }}>
-            <Divider sx={{ mb: 3 }} />
-            
-            <Grid container spacing={2} direction={{ xs: 'column', sm: 'row' }}>
-              {onCancel && (
-                <Grid item xs={12} sm={4}>
-                  <Button
-                    fullWidth
-                    variant="outlined"
-                    color="secondary"
-                    onClick={onCancel}
-                    size="large"
-                    sx={{ height: '56px' }}
-                  >
-                    Cancelar
-                  </Button>
-                </Grid>
-              )}
-              
-              <Grid item xs={12} sm={onCancel ? 4 : 6}>
-                <Button
-                  fullWidth
-                  variant="outlined"
-                  color="secondary"
-                  startIcon={<SaveIcon />}
-                  onClick={() => {
-                    localStorageService.saveFormDraft({ formValues: formik.values });
-                    setSnackbar({ open: true, message: 'Borrador guardado', severity: 'success' });
-                  }}
-                  disabled={!formik.dirty}
-                  size="large"
-                  sx={{ height: '56px' }}
-                >
-                  Guardar Borrador
-                </Button>
-              </Grid>
-              
-              <Grid item xs={12} sm={onCancel ? 4 : 6}>
-                <Button
-                  fullWidth
-                  type="submit"
-                  variant="contained"
-                  color="primary"
-                  disabled={loading || !formik.isValid || !formik.dirty}
-                  size="large"
-                  sx={{ height: '56px' }}
-                >
-                  {loading ? <CircularProgress size={24} color="inherit" /> : "Registrar Actividad"}
-                </Button>
-              </Grid>
-            </Grid>
+
+          <Grid item xs={12} sm={6} sx={{ display: { xs: 'none', sm: 'block' } }}>
+            <Button
+              fullWidth
+              variant="text"
+              startIcon={<SaveIcon />}
+              onClick={() => {
+                localStorageService.saveFormDraft({ formValues: formik.values });
+                setSnackbar({ open: true, message: 'Borrador guardado', severity: 'success' });
+              }}
+              disabled={!formik.dirty || !!initialData}
+              size="medium"
+              sx={{ minHeight: '48px' }}
+            >
+              Guardar Borrador
+            </Button>
+          </Grid>
+
+          <Grid item xs={12} sm={3}>
+            {currentStep === steps.length - 1 ? (
+              <Button
+                fullWidth
+                variant="contained"
+                onClick={() => {
+                  formik.validateForm().then(errors => {
+                    if (Object.keys(errors).length === 0) {
+                      formik.submitForm();
+                    } else {
+                      Object.keys(formik.initialValues).forEach(key => {
+                        formik.setFieldTouched(key, true, true);
+                      });
+                      setSnackbar({
+                        open: true,
+                        message: 'Hay errores en el formulario. Revisa los pasos.',
+                        severity: 'error'
+                      });
+                    }
+                  });
+                }}
+                disabled={loading}
+                startIcon={loading ? <CircularProgress size={20} /> : <SendIcon />}
+                size={window.innerWidth < 600 ? "small" : "medium"}
+                sx={{ 
+                  minHeight: { xs: '40px', sm: '48px' },
+                  fontSize: { xs: '0.8rem', sm: '0.875rem' }
+                }}
+              >
+                {loading ? '' : (initialData ? 'Actualizar' : 'Enviar')}
+              </Button>
+            ) : (
+              <Button
+                fullWidth
+                variant="contained"
+                onClick={handleNextStep}
+                endIcon={<ArrowForwardIcon />}
+                size={window.innerWidth < 600 ? "small" : "medium"}
+                sx={{ 
+                  minHeight: { xs: '40px', sm: '48px' },
+                  fontSize: { xs: '0.8rem', sm: '0.875rem' }
+                }}
+              >
+                Siguiente
+              </Button>
+            )}
+          </Grid>
+
+          <Grid item xs={12} sx={{ display: { xs: 'block', sm: 'none' }, mt: 1 }}>
+            <Button
+              fullWidth
+              variant="text"
+              startIcon={<SaveIcon />}
+              onClick={() => {
+                localStorageService.saveFormDraft({ formValues: formik.values });
+                setSnackbar({ open: true, message: 'Borrador guardado', severity: 'success' });
+              }}
+              disabled={!formik.dirty || !!initialData}
+              size="small"
+              sx={{ minHeight: '36px', fontSize: '0.75rem' }}
+            >
+              Guardar Borrador
+            </Button>
           </Grid>
         </Grid>
-      </form>
-      
-      <Snackbar 
-        open={snackbar.open} 
-        autoHideDuration={4000} 
+      </Paper>
+
+      {/* Snackbar */}
+      <Snackbar
+        open={snackbar.open}
+        autoHideDuration={6000}
         onClose={handleCloseSnackbar}
         anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+        sx={{ mb: { xs: 13, sm: 8 } }}
       >
         <Alert onClose={handleCloseSnackbar} severity={snackbar.severity} variant="filled" sx={{ width: '100%' }}>
           {snackbar.message}
         </Alert>
       </Snackbar>
-    </Paper>
+    </Box>
   );
 };
 
-export default ActivityForm;
+export default React.memo(ActivityForm);

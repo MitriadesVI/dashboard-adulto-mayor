@@ -186,3 +186,11 @@ async function networkFirst(request) {
     throw error;
   }
 }
+
+// 📨 MANEJAR MENSAJES PARA ACTUALIZACIONES
+self.addEventListener('message', (event) => {
+  if (event.data && event.data.type === 'SKIP_WAITING') {
+    console.log('[SW] ⏭️ Activando nueva versión inmediatamente');
+    self.skipWaiting();
+  }
+});
