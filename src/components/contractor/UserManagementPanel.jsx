@@ -1,6 +1,6 @@
 // Añade este archivo: src/components/contractor/UserManagementPanel.jsx
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   Paper, 
   Typography, 
@@ -34,9 +34,10 @@ import EditIcon from '@mui/icons-material/Edit';
 import DeleteIcon from '@mui/icons-material/Delete';
 import VisibilityIcon from '@mui/icons-material/Visibility';
 import ManageAccountsIcon from '@mui/icons-material/ManageAccounts';
-import { collection, query, where, getDocs, doc, updateDoc, setDoc, serverTimestamp, deleteDoc } from 'firebase/firestore';
+import { collection, query, where, getDocs, doc, updateDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from '../../firebase/config';
 import authService from '../../services/authService';
+import { getContractorName } from '../../config/contractors';
 
 const UserManagementPanel = ({ user }) => {
   const [users, setUsers] = useState([]);
@@ -64,28 +65,15 @@ const UserManagementPanel = ({ user }) => {
     active: true
   });
 
-  useEffect(() => {
-    loadUsers();
-  }, [user]);
-
   // Cargar usuarios del mismo contratista
-  const loadUsers = async () => {
+  const loadUsers = useCallback(async () => {
+    if (!user?.contractor) return;
     setLoadingUsers(true);
     try {
       const usersRef = collection(db, 'users');
       const q = query(usersRef, where('contractor', '==', user.contractor));
       const querySnapshot = await getDocs(q);
-      
-      const usersData = [];
-      querySnapshot.forEach((doc) => {
-        const userData = doc.data();
-        usersData.push({
-          id: doc.id,
-          ...userData
-        });
-      });
-      
-      setUsers(usersData);
+      setUsers(querySnapshot.docs.map(userDoc => ({ id: userDoc.id, ...userDoc.data() })));
     } catch (error) {
       console.error('Error al cargar usuarios:', error);
       setSnackbar({
@@ -96,7 +84,11 @@ const UserManagementPanel = ({ user }) => {
     } finally {
       setLoadingUsers(false);
     }
-  };
+  }, [user?.contractor]);
+
+  useEffect(() => {
+    loadUsers();
+  }, [loadUsers]);
 
   const handleOpenCreateDialog = () => {
     setFormUser({
@@ -178,9 +170,11 @@ const UserManagementPanel = ({ user }) => {
       }
       
       if (isEditing) {
-        // Actualizar usuario existente
+        // Actualizar usuario existente (el contratista y el tipo de admin principal no cambian)
         const userRef = doc(db, 'users', formUser.id);
-        await updateDoc(userRef, userData);
+        const { contractor, ...editableData } = userData;
+        if (selectedUser?.adminType === 'main') delete editableData.adminType;
+        await updateDoc(userRef, { ...editableData, updatedAt: serverTimestamp() });
         
         setSnackbar({
           open: true,
@@ -212,9 +206,9 @@ const UserManagementPanel = ({ user }) => {
     }
   };
 
-  const handleOpenDeleteDialog = (user) => {
-    // Solo permitir eliminar si no es main admin o el usuario actual
-    if (user.role === 'contractor-admin' && user.adminType === 'main' || user.id === user.uid) {
+  const handleOpenDeleteDialog = (targetUser) => {
+    // No se puede desactivar al representante principal ni a uno mismo
+    if ((targetUser.role === 'contractor-admin' && targetUser.adminType === 'main') || targetUser.id === user.uid) {
       setSnackbar({
         open: true,
         message: 'No se puede eliminar este usuario',
@@ -223,7 +217,7 @@ const UserManagementPanel = ({ user }) => {
       return;
     }
     
-    setDeletingUser(user);
+    setDeletingUser(targetUser);
     setDeleteDialogOpen(true);
   };
 
@@ -235,7 +229,7 @@ const UserManagementPanel = ({ user }) => {
       
       // Opción 1: Marcar como inactivo en lugar de eliminar
       const userRef = doc(db, 'users', deletingUser.id);
-      await updateDoc(userRef, { active: false });
+      await updateDoc(userRef, { active: false, updatedAt: serverTimestamp() });
       
       // Opción 2: Eliminar realmente (descomentar si prefieres esta opción)
       // await deleteDoc(doc(db, 'users', deletingUser.id));
@@ -293,7 +287,7 @@ const UserManagementPanel = ({ user }) => {
     <Paper elevation={3} sx={{ p: 3, mb: 4 }}>
       <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
         <Typography variant="h5" gutterBottom>
-          Gestión de Usuarios de {user.contractor}
+          Equipo de {getContractorName(user.contractor)}
         </Typography>
         <Button
           variant="contained"
@@ -324,8 +318,8 @@ const UserManagementPanel = ({ user }) => {
               <React.Fragment key={userData.id}>
                 <ListItem 
                   sx={{
-                    bgcolor: !userData.active ? 'rgba(0,0,0,0.05)' : 'inherit',
-                    opacity: !userData.active ? 0.7 : 1
+                    bgcolor: userData.active === false ? 'rgba(0,0,0,0.05)' : 'inherit',
+                    opacity: userData.active === false ? 0.7 : 1
                   }}
                 >
                   <ListItemText
@@ -334,7 +328,7 @@ const UserManagementPanel = ({ user }) => {
                         <Typography variant="subtitle1">
                           {userData.name} {isCurrentUser && '(Tú)'}
                         </Typography>
-                        {!userData.active && (
+                        {userData.active === false && (
                           <Chip 
                             size="small" 
                             label="Inactivo" 

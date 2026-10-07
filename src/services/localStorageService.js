@@ -136,13 +136,15 @@ const KEYS = {
     },
     
     /**
-     * Obtiene todas las actividades pendientes de sincronización
+     * Obtiene las actividades pendientes de sincronización
+     * @param {String} [uid] - Si se indica, solo las registradas por ese usuario
      * @returns {Array} Lista de actividades pendientes
      */
-    getPendingActivities: () => {
+    getPendingActivities: (uid) => {
       try {
         const activitiesData = localStorage.getItem(KEYS.PENDING_ACTIVITIES);
-        return activitiesData ? JSON.parse(activitiesData) : [];
+        const activities = activitiesData ? JSON.parse(activitiesData) : [];
+        return uid ? activities.filter(activity => activity?.createdBy?.uid === uid) : activities;
       } catch (error) {
         console.error('Error al obtener actividades pendientes:', error);
         return [];
@@ -252,13 +254,15 @@ const KEYS = {
     },
     
     /**
-     * Limpia todos los datos de localStorage definidos por esta app
+     * Limpia los datos de sesión de la app al cerrar sesión.
+     * Las actividades registradas sin conexión NO se borran: pertenecen a su autor
+     * (createdBy.uid) y se sincronizan cuando vuelva a iniciar sesión.
      */
     clearAll: () => {
       try {
-        console.log("Limpiando datos de localStorage para la aplicación...");
-        Object.values(KEYS).forEach(key => localStorage.removeItem(key));
-        console.log("LocalStorage de la aplicación limpiado.");
+        Object.values(KEYS)
+          .filter(key => key !== KEYS.PENDING_ACTIVITIES)
+          .forEach(key => localStorage.removeItem(key));
       } catch (error) {
         console.error('Error al limpiar localStorage:', error);
       }

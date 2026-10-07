@@ -16,9 +16,6 @@ import AdminPanel from './components/pages/AdminPanel';
 import DiagnosticPage from './components/DiagnosticPage';
 import ProfilePanel from './components/profile/ProfilePanel';
 
-// Dashboard del contratista
-import ContractorDashboard from './components/contractor/ContractorDashboard';
-
 // Componentes funcionales
 import PrivateRoute from './components/PrivateRoute';
 import Navbar from './components/Navbar';
@@ -29,6 +26,17 @@ import authService from './services/authService';
 import activitiesService from './services/activitiesService';
 import goalsService from './services/goalsService';
 import localStorageService from './services/localStorageService';
+import { startOfDay, endOfDay, parseActivityDate } from './utils/dates';
+
+// Filtro por tipo de actividad (modelo actual: educationalActivity / nutritionDelivery)
+const matchesActivityType = (activity, type) => {
+  if (activity?.educationalActivity?.included && activity.educationalActivity.type === type) return true;
+  return type === 'nutrition' && Boolean(activity?.nutritionDelivery?.included);
+};
+
+// Cambios del perfil que obligan a actualizar el usuario guardado localmente
+const profileChanged = (a, b) =>
+  ['email', 'role', 'contractor', 'name', 'adminType', 'active'].some(key => a?.[key] !== b?.[key]);
 
 // Tema personalizado de Material UI
 const theme = createTheme({
@@ -83,45 +91,34 @@ function App() {
       setError(null);
       
       try {
-        // Intentar obtener usuario de localStorage primero (carga rápida)
+        // Usuario guardado localmente: carga rápida y permite abrir la app sin conexión
         const localUser = localStorageService.getUser();
-        
         if (localUser) {
-          console.log("✅ Usuario encontrado en localStorage:", localUser.email);
+          // Mostrar la app de inmediato; la sesión se verifica en segundo plano
           setUser(localUser);
-          
-          // Verificar con Firebase en segundo plano
-          try {
-            const firebaseUser = await authService.getCurrentUser();
-            if (firebaseUser) {
-              console.log("✅ Usuario verificado en Firebase");
-              // Solo actualizar si hay cambios significativos
-              if (firebaseUser.email !== localUser.email || firebaseUser.role !== localUser.role) {
-                setUser(firebaseUser);
-                localStorageService.saveUser(firebaseUser);
-              }
-            } else {
-              console.warn("⚠️ Usuario local existe pero no está en Firebase");
-              // Mantener usuario local hasta logout explícito
-            }
-          } catch (firebaseError) {
-            console.error("❌ Error verificando con Firebase:", firebaseError);
-            // Mantener usuario local en caso de problemas de conexión
-          }
-        } else {
-          console.log("🔍 No hay usuario local, verificando con Firebase...");
-          try {
-            const firebaseUser = await authService.getCurrentUser();
-            if (firebaseUser) {
-              console.log("✅ Usuario encontrado en Firebase:", firebaseUser.email);
+          setLoading(false);
+          setAuthCompleted(true);
+        }
+
+        try {
+          const firebaseUser = await authService.getCurrentUser();
+          if (firebaseUser) {
+            if (!localUser || profileChanged(firebaseUser, localUser)) {
               setUser(firebaseUser);
               localStorageService.saveUser(firebaseUser);
-            } else {
-              console.log("ℹ️ No hay usuario autenticado");
-              setUser(null);
             }
-          } catch (firebaseError) {
-            console.error("❌ Error verificando Firebase:", firebaseError);
+          } else {
+            // Sin sesión en Firebase, o usuario sin perfil / desactivado
+            if (localUser) {
+              console.warn("⚠️ La sesión ya no es válida; se requiere iniciar sesión de nuevo");
+              localStorageService.clearAll();
+            }
+            setUser(null);
+          }
+        } catch (verifyError) {
+          // No se pudo verificar (sin conexión): se mantiene el usuario local si existe
+          console.warn("⚠️ No se pudo verificar la sesión:", verifyError.message);
+          if (!localUser) {
             setUser(null);
             setError("Error de conexión. Por favor inicie sesión nuevamente.");
           }
@@ -174,48 +171,28 @@ function App() {
       }
       
       if (filters.type && filters.type !== 'all') {
-        filtered = filtered.filter(a => a && a.type === filters.type);
+        filtered = filtered.filter(a => matchesActivityType(a, filters.type));
       }
       
       if (filters.locationType && filters.locationType !== 'all') {
         filtered = filtered.filter(a => a && a.location && a.location.type === filters.locationType);
       }
       
-      if (filters.startDate) {
-        try {
-          const startDate = new Date(filters.startDate);
-          startDate.setHours(0,0,0,0);
-          filtered = filtered.filter(a => {
-            if (!a || !a.date) return false;
-            const activityDate = new Date(a.date);
-            return !isNaN(activityDate.getTime()) && activityDate >= startDate;
-          });
-        } catch (e) {
-          console.error("Error filtrando por fecha inicial:", e);
-        }
-      }
-      
-      if (filters.endDate) {
-        try {
-          const endDate = new Date(filters.endDate);
-          endDate.setHours(23,59,59,999);
-          filtered = filtered.filter(a => {
-            if (!a || !a.date) return false;
-            const activityDate = new Date(a.date);
-            return !isNaN(activityDate.getTime()) && activityDate <= endDate;
-          });
-        } catch (e) {
-          console.error("Error filtrando por fecha final:", e);
-        }
-      }
+      const startDate = filters.startDate ? startOfDay(filters.startDate) : null;
+      const endDate = filters.endDate ? endOfDay(filters.endDate) : null;
+      if (startDate) filtered = filtered.filter(a => a.date && a.date >= startDate);
+      if (endDate) filtered = filtered.filter(a => a.date && a.date <= endDate);
       
       setActivities(filtered);
       
-      // Cargar metas si se especifica un contratista
+      // Metas anuales del contratista: se calculan con todas sus actividades aprobadas
+      // del año (no dependen de los filtros de tipo, ubicación o fecha)
       if (filters.contractor && filters.contractor !== 'all' && filters.contractor !== 'Todos') {
         try {
-          const year = new Date().getFullYear();
-          const goalsData = await goalsService.calculateProgress(filters.contractor, year, filtered);
+          const referenceDate = parseActivityDate(filters.endDate) || parseActivityDate(filters.startDate) || new Date();
+          const year = referenceDate.getFullYear();
+          const contractorApproved = approvedActivities.filter(a => a.contractor === filters.contractor);
+          const goalsData = await goalsService.calculateProgress(filters.contractor, year, contractorApproved);
           setGoals(goalsData);
         } catch (error) {
           console.error("Error al cargar/calcular metas:", error);
@@ -262,18 +239,22 @@ function App() {
   };
 
   const handleLogout = async () => {
+    const pendingCount = user ? localStorageService.getPendingActivities(user.uid).length : 0;
+    if (pendingCount > 0) {
+      const proceed = window.confirm(
+        `Tiene ${pendingCount} actividad(es) registradas sin conexión que aún no se han enviado. ` +
+        'Se conservarán en este dispositivo y se enviarán cuando vuelva a iniciar sesión con conexión. ¿Desea cerrar sesión?'
+      );
+      if (!proceed) return;
+    }
+
     console.log("🚪 Cerrando sesión...");
     try {
       await authService.logout();
-      setUser(null);
-      localStorageService.clearAll();
-      setActivities([]);
-      setGoals(null);
-      console.log("✅ Sesión cerrada correctamente");
     } catch (error) {
       console.error('Error al cerrar sesión:', error);
       setError("Error al cerrar sesión. Los datos locales han sido eliminados.");
-      // Aún así limpiamos datos locales
+    } finally {
       localStorageService.clearAll();
       setUser(null);
       setActivities([]);

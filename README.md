@@ -1,70 +1,53 @@
-# Getting Started with Create React App
+# SEPAM – Seguimiento de Centros de Vida (Programa Adulto Mayor)
 
-This project was bootstrapped with [Create React App](https://github.com/facebook/create-react-app).
+Aplicación web (PWA) para que los contratistas registren las actividades que realizan en
+cada parque o Centro de Vida (CDV) fijo —actividades educativas y entrega de raciones— y
+para que el Distrito haga seguimiento: qué sedes no han recibido atención, avance de metas
+y comparativos entre contratistas.
 
-## Available Scripts
+## Roles
 
-In the project directory, you can run:
+| Rol | Qué hace |
+|---|---|
+| `district` (Distrito) | Dashboard completo, sedes, metas y gestión de usuarios (activar/desactivar, representante principal). |
+| `contractor-admin` (Representante / administrador) | Aprueba o rechaza actividades de su equipo, gestiona su equipo y ve el dashboard del contratista (cobertura de sedes, metas, reporte de usuarios). El representante **principal** (`adminType: 'main'`) es quien edita y desactiva a su equipo. |
+| `field` (Profesional de campo) | Registra actividades (también sin conexión), corrige las rechazadas y ve su propio dashboard. |
 
-### `npm start`
+Las actividades nacen `pending`, el contratista las aprueba o rechaza, y una rechazada se
+corrige y vuelve a `pending` (queda el historial del rechazo).
 
-Runs the app in the development mode.\
-Open [http://localhost:3000](http://localhost:3000) to view it in your browser.
+## Desarrollo
 
-The page will reload when you make changes.\
-You may also see any lint errors in the console.
+```bash
+npm install
+npm start        # http://localhost:3000
+npm run build    # build de producción (Netlify publica la carpeta build/)
+```
 
-### `npm test`
+## Configuración
 
-Launches the test runner in the interactive watch mode.\
-See the section about [running tests](https://facebook.github.io/create-react-app/docs/running-tests) for more information.
+- **Contratistas:** se definen en `src/config/contractors.js` (id guardado en Firestore,
+  nombre visible, estilo de etiquetas y color). Es el único lugar que hay que editar para
+  cambiar o agregar un contratista.
+- **Fechas:** las actividades guardan la fecha como `'YYYY-MM-DD'` y se interpretan en hora
+  local con `src/utils/dates.js` (no usar `new Date('YYYY-MM-DD')`, que es UTC).
 
-### `npm run build`
+## Firebase (reglas e índices)
 
-Builds the app for production to the `build` folder.\
-It correctly bundles React in production mode and optimizes the build for the best performance.
+Las reglas de seguridad y los índices están versionados en `firestore.rules` y
+`firestore.indexes.json`. Para publicarlos:
 
-The build is minified and the filenames include the hashes.\
-Your app is ready to be deployed!
+```bash
+npm install -g firebase-tools
+firebase login
+firebase deploy --only firestore:rules,firestore:indexes --project cdv1-74cb3
+```
 
-See the section about [deployment](https://facebook.github.io/create-react-app/docs/deployment) for more information.
+(O copiar `firestore.rules` en Firebase Console → Firestore Database → Reglas.)
 
-### `npm run eject`
-
-**Note: this is a one-way operation. Once you `eject`, you can't go back!**
-
-If you aren't satisfied with the build tool and configuration choices, you can `eject` at any time. This command will remove the single build dependency from your project.
-
-Instead, it will copy all the configuration files and the transitive dependencies (webpack, Babel, ESLint, etc) right into your project so you have full control over them. All of the commands except `eject` will still work, but they will point to the copied scripts so you can tweak them. At this point you're on your own.
-
-You don't have to ever use `eject`. The curated feature set is suitable for small and middle deployments, and you shouldn't feel obligated to use this feature. However we understand that this tool wouldn't be useful if you couldn't customize it when you are ready for it.
-
-## Learn More
-
-You can learn more in the [Create React App documentation](https://facebook.github.io/create-react-app/docs/getting-started).
-
-To learn React, check out the [React documentation](https://reactjs.org/).
-
-### Code Splitting
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/code-splitting](https://facebook.github.io/create-react-app/docs/code-splitting)
-
-### Analyzing the Bundle Size
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/analyzing-the-bundle-size](https://facebook.github.io/create-react-app/docs/analyzing-the-bundle-size)
-
-### Making a Progressive Web App
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/making-a-progressive-web-app](https://facebook.github.io/create-react-app/docs/making-a-progressive-web-app)
-
-### Advanced Configuration
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/advanced-configuration](https://facebook.github.io/create-react-app/docs/advanced-configuration)
-
-### Deployment
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/deployment](https://facebook.github.io/create-react-app/docs/deployment)
-
-### `npm run build` fails to minify
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/troubleshooting#npm-run-build-fails-to-minify](https://facebook.github.io/create-react-app/docs/troubleshooting#npm-run-build-fails-to-minify)
+Notas:
+- Los usuarios los crea el Distrito (o el representante del contratista para su equipo)
+  desde la app. Las reglas impiden que alguien se asigne un rol por su cuenta.
+- El primer usuario del Distrito debe tener su documento en `users/{uid}` con
+  `role: 'district'` (crearlo una vez desde Firebase Console si el proyecto es nuevo).
+- Un usuario con `active: false` no puede iniciar sesión ni leer o escribir datos.

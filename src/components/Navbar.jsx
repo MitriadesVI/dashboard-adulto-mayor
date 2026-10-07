@@ -15,6 +15,7 @@ import {
   Tooltip
 } from '@mui/material';
 import { Link, useNavigate, useLocation } from 'react-router-dom';
+import { getContractorName } from '../config/contractors';
 import MenuIcon from '@mui/icons-material/Menu';
 import AccountCircleIcon from '@mui/icons-material/AccountCircle';
 import DashboardIcon from '@mui/icons-material/Dashboard';
@@ -183,7 +184,7 @@ const Navbar = ({ user, onLogout, offline }) => {
               <Box>
                 <Typography variant="body1">{user.name}</Typography>
                 <Typography variant="body2" color="text.secondary">
-                  {user.contractor} - {user.role === 'field' ? 'Personal de Campo' : 
+                  {user.role === 'district' ? 'Distrito' : getContractorName(user.contractor)} - {user.role === 'field' ? 'Personal de Campo' : 
                    user.role === 'contractor-admin' ? 'Representante Legal' : 'Funcionario Distrital'}
                 </Typography>
               </Box>

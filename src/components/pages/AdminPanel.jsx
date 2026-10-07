@@ -27,7 +27,9 @@ import {
   DialogTitle,
   DialogContent,
   DialogActions,
-  Chip
+  Chip,
+  Switch,
+  Tooltip
 } from '@mui/material';
 import EditIcon from '@mui/icons-material/Edit';
 import SaveIcon from '@mui/icons-material/Save';
@@ -38,13 +40,15 @@ import RefreshIcon from '@mui/icons-material/Refresh';
 import goalsService from '../../services/goalsService';
 import authService from '../../services/authService';
 // Importar Firestore para obtener usuarios
-import { collection, getDocs, query, orderBy } from 'firebase/firestore';
+import { collection, getDocs, query, orderBy, doc, updateDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from '../../firebase/config';
+import { CONTRACTORS, DEFAULT_CONTRACTOR, getContractorName } from '../../config/contractors';
+import { getActivityTypeLabel as getTypeLabelForContractor } from '../dashboard/common/helpers';
 
 const AdminPanel = ({ user }) => {
   const [tabValue, setTabValue] = useState(0);
   const [year, setYear] = useState(new Date().getFullYear());
-  const [contractor, setContractor] = useState('CUC');
+  const [contractor, setContractor] = useState(DEFAULT_CONTRACTOR);
   const [goals, setGoals] = useState(null);
   const [loading, setLoading] = useState(false);
   const [allGoals, setAllGoals] = useState([]);
@@ -68,7 +72,7 @@ const AdminPanel = ({ user }) => {
     email: '',
     password: '',
     role: 'field',
-    contractor: 'CUC'
+    contractor: DEFAULT_CONTRACTOR
   });
 
   // Cargar datos según la pestaña activa
@@ -270,6 +274,8 @@ const AdminPanel = ({ user }) => {
       // CORRECCIÓN: Solo agregar contractor si no es usuario district
       if (newUser.role !== 'district') {
         userData.contractor = newUser.contractor;
+        // El representante creado por el distrito es el administrador principal del contratista
+        if (newUser.role === 'contractor-admin') userData.adminType = 'main';
       } else {
         userData.contractor = 'DISTRITO'; // Asignar valor específico para usuarios district
       }
@@ -287,7 +293,7 @@ const AdminPanel = ({ user }) => {
         email: '',
         password: '',
         role: 'field',
-        contractor: 'CUC'
+        contractor: DEFAULT_CONTRACTOR
       });
       
       setUserDialogOpen(false);
@@ -351,15 +357,36 @@ const AdminPanel = ({ user }) => {
     return subtypeMap[type]?.[subtype] || subtype;
   };
 
-  const getActivityTypeLabel = (type, contractorForLabel) => { // Renombrado para evitar colisión con estado
-    if (type === 'nutrition') {
-      return contractorForLabel === 'CUC' ? 'Educación Nutricional' : 'Salud Nutricional';
-    } else if (type === 'physical') {
-      return contractorForLabel === 'CUC' ? 'Educación en Salud Física' : 'Salud Física';
-    } else if (type === 'psychosocial') {
-      return contractorForLabel === 'CUC' ? 'Educación Psicosocial' : 'Salud Psicosocial';
+  const getActivityTypeLabel = (type, contractorForLabel) => getTypeLabelForContractor(type, contractorForLabel);
+
+  // Activar/desactivar usuarios. Un usuario desactivado no puede iniciar sesión.
+  const handleToggleActive = async (userItem) => {
+    const isActive = userItem.active !== false;
+    try {
+      await updateDoc(doc(db, 'users', userItem.id), { active: !isActive, updatedAt: serverTimestamp() });
+      setUsers(prev => prev.map(u => (u.id === userItem.id ? { ...u, active: !isActive } : u)));
+      setSnackbar({ open: true, message: `Usuario ${isActive ? 'desactivado' : 'activado'}`, severity: 'success' });
+    } catch (error) {
+      console.error('Error al cambiar estado del usuario:', error);
+      setSnackbar({ open: true, message: 'No se pudo cambiar el estado del usuario', severity: 'error' });
     }
-    return type;
+  };
+
+  // El representante principal de un contratista es quien gestiona su equipo
+  const handleToggleAdminType = async (userItem) => {
+    const newType = userItem.adminType === 'main' ? 'secondary' : 'main';
+    try {
+      await updateDoc(doc(db, 'users', userItem.id), { adminType: newType, updatedAt: serverTimestamp() });
+      setUsers(prev => prev.map(u => (u.id === userItem.id ? { ...u, adminType: newType } : u)));
+      setSnackbar({
+        open: true,
+        message: newType === 'main' ? 'Ahora es representante principal' : 'Ahora es administrador secundario',
+        severity: 'success'
+      });
+    } catch (error) {
+      console.error('Error al cambiar tipo de administrador:', error);
+      setSnackbar({ open: true, message: 'No se pudo cambiar el tipo de administrador', severity: 'error' });
+    }
   };
 
   return (
@@ -395,8 +422,9 @@ const AdminPanel = ({ user }) => {
                     label="Contratista"
                     onChange={(e) => setContractor(e.target.value)}
                   >
-                    <MenuItem value="CUC">CUC</MenuItem>
-                    <MenuItem value="FUNDACARIBE">FUNDACARIBE</MenuItem>
+                    {CONTRACTORS.map(c => (
+                      <MenuItem key={c.id} value={c.id}>{c.name}</MenuItem>
+                    ))}
                   </Select>
                 </FormControl>
               </Grid>
@@ -747,7 +775,7 @@ const AdminPanel = ({ user }) => {
                       <TableCell><strong>Contratista</strong></TableCell>
                       <TableCell><strong>Estado</strong></TableCell>
                       <TableCell><strong>Fecha Creación</strong></TableCell>
-                      {/* <TableCell align="right"><strong>Acciones</strong></TableCell> */} {/* Podrías añadir acciones aquí */}
+                      <TableCell align="right"><strong>Acciones</strong></TableCell>
                     </TableRow>
                   </TableHead>
                   <TableBody>
@@ -761,17 +789,42 @@ const AdminPanel = ({ user }) => {
                             color={getRoleChipColor(userItem.role)}
                             size="small"
                           />
+                          {userItem.role === 'contractor-admin' && (
+                            <Chip
+                              label={userItem.adminType === 'main' ? 'Principal' : 'Secundario'}
+                              variant="outlined"
+                              size="small"
+                              sx={{ ml: 0.5 }}
+                            />
+                          )}
                         </TableCell>
-                        <TableCell>{userItem.contractor || 'N/A'}</TableCell>
+                        <TableCell>{userItem.role === 'district' ? 'Distrito' : (getContractorName(userItem.contractor) || 'N/A')}</TableCell>
                         <TableCell>
                           <Chip 
-                            label={userItem.active ? 'Activo' : 'Inactivo'} 
-                            color={userItem.active ? 'success' : 'default'}
+                            label={userItem.active !== false ? 'Activo' : 'Inactivo'} 
+                            color={userItem.active !== false ? 'success' : 'default'}
                             size="small"
                           />
                         </TableCell>
                         <TableCell>{userItem.createdAtFormatted}</TableCell>
-                      
+                        <TableCell align="right" sx={{ whiteSpace: 'nowrap' }}>
+                          {userItem.role === 'contractor-admin' && (
+                            <Button size="small" onClick={() => handleToggleAdminType(userItem)} sx={{ mr: 1 }}>
+                              {userItem.adminType === 'main' ? 'Quitar principal' : 'Hacer principal'}
+                            </Button>
+                          )}
+                          <Tooltip title={userItem.id === user?.uid ? 'No puede desactivarse a sí mismo' : (userItem.active !== false ? 'Desactivar' : 'Activar')}>
+                            <span>
+                              <Switch
+                                size="small"
+                                checked={userItem.active !== false}
+                                onChange={() => handleToggleActive(userItem)}
+                                disabled={userItem.id === user?.uid}
+                              />
+                            </span>
+                          </Tooltip>
+                        </TableCell>
+
                       </TableRow>
                     ))}
                   </TableBody>
@@ -788,7 +841,7 @@ const AdminPanel = ({ user }) => {
         onClose={() => {
             setUserDialogOpen(false);
             // Opcional: resetear newUser state si no se guarda
-             setNewUser({ name: '', email: '', password: '', role: 'field', contractor: 'CUC' });
+             setNewUser({ name: '', email: '', password: '', role: 'field', contractor: DEFAULT_CONTRACTOR });
         }}
         maxWidth="sm"
         fullWidth
@@ -856,8 +909,9 @@ const AdminPanel = ({ user }) => {
                     label="Contratista"
                     onChange={handleUserInputChange}
                   >
-                    <MenuItem value="CUC">CUC</MenuItem>
-                    <MenuItem value="FUNDACARIBE">FUNDACARIBE</MenuItem>
+                    {CONTRACTORS.map(c => (
+                      <MenuItem key={c.id} value={c.id}>{c.name}</MenuItem>
+                    ))}
                   </Select>
                 </FormControl>
               </Grid>
@@ -875,7 +929,7 @@ const AdminPanel = ({ user }) => {
         <DialogActions sx={{ p: '16px 24px' }}>
           <Button onClick={() => {
               setUserDialogOpen(false);
-              setNewUser({ name: '', email: '', password: '', role: 'field', contractor: 'CUC' });
+              setNewUser({ name: '', email: '', password: '', role: 'field', contractor: DEFAULT_CONTRACTOR });
             }}
             color="inherit"
           >

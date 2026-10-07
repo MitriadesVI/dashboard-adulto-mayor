@@ -11,6 +11,7 @@ import {
   serverTimestamp
 } from 'firebase/firestore';
 import { db } from '../firebase/config';
+import { getActivityYear } from '../utils/dates';
 
 const goalsService = {
   // Establecer metas para un contratista y año
@@ -124,7 +125,7 @@ const goalsService = {
   // FUNCIÓN COMPLETAMENTE REESCRITA: Calcular el progreso hacia las metas
   calculateProgress: async (contractor, year, activities) => {
     try {
-      console.log(`Calculando progreso para ${contractor} ${year} con ${activities.length} actividades`);
+      console.log(`Calculando progreso para ${contractor} ${year} con ${(activities || []).length} actividades`);
       
       // Obtener las metas
       const goals = await goalsService.getGoals(contractor, year);
@@ -152,8 +153,15 @@ const goalsService = {
         }
       };
       
+      // Solo cuentan las actividades aprobadas del año de la meta
+      const yearActivities = (activities || []).filter(activity =>
+        activity &&
+        (!activity.status || activity.status === 'approved') &&
+        getActivityYear(activity.date) === Number(year)
+      );
+
       // NUEVO: Contar actividades usando el modelo actual
-      activities.forEach(activity => {
+      yearActivities.forEach(activity => {
         if (!activity) return;
         
         // CONTAR ACTIVIDADES EDUCATIVAS
@@ -242,30 +250,35 @@ const goalsService = {
       
       console.log('Progreso calculado:', progress);
       
-      // Calcular promedios generales por tipo
-      const nutritionValues = Object.values(progress.nutrition).filter(val => !isNaN(val));
-      const physicalValues = Object.values(progress.physical).filter(val => !isNaN(val));
-      const psychosocialValues = Object.values(progress.psychosocial).filter(val => !isNaN(val));
-      
-      const averages = {
-        nutrition: nutritionValues.length > 0 
-          ? nutritionValues.reduce((sum, val) => sum + val, 0) / nutritionValues.length 
-          : 0,
-        physical: physicalValues.length > 0 
-          ? physicalValues.reduce((sum, val) => sum + val, 0) / physicalValues.length 
-          : 0,
-        psychosocial: psychosocialValues.length > 0 
-          ? psychosocialValues.reduce((sum, val) => sum + val, 0) / psychosocialValues.length 
-          : 0
+      // Promedios por componente: solo estrategias que tienen meta (> 0).
+      // Una estrategia sin meta no debe contar como 0% de avance.
+      const averageWithGoals = (component) => {
+        const values = Object.keys(progress[component])
+          .filter(key => (goals.activities[component]?.[key] || 0) > 0)
+          .map(key => progress[component][key])
+          .filter(val => !isNaN(val));
+        return values.length > 0 ? values.reduce((sum, val) => sum + val, 0) / values.length : 0;
       };
-      
+
+      const averages = {
+        nutrition: averageWithGoals('nutrition'),
+        physical: averageWithGoals('physical'),
+        psychosocial: averageWithGoals('psychosocial')
+      };
+
       console.log('Promedios calculados:', averages);
       
+      const hasGoals = ['nutrition', 'physical', 'psychosocial'].some(component =>
+        Object.values(goals.activities[component] || {}).some(value => value > 0)
+      );
+
       return {
         counts,
         goals: goals.activities,
         progress,
-        averages
+        averages,
+        hasGoals,
+        year: Number(year)
       };
     } catch (error) {
       console.error('Error al calcular progreso:', error);
