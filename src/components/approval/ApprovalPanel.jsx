@@ -52,7 +52,14 @@ import {
   formatLocationType
 } from '../dashboard/common/helpers';
 
+// Los errores que lanza activitiesService (Error simple con mensaje en español, p. ej.
+// "La actividad ya fue revisada por otra persona") se muestran tal cual. Los errores de
+// Firebase (traen `code`) o de red (TypeError) vienen en inglés: para ellos se usa un mensaje genérico.
+const isServiceError = (error) =>
+  Boolean(error && error.name === 'Error' && error.message && !error.code);
+
 const ApprovalPanel = ({ user, onUserUpdate }) => {
+  const contractor = user?.contractor;
   const [activities, setActivities] = useState([]);
   const [allActivities, setAllActivities] = useState([]); // Para métricas de aprobación
   const [selectedActivity, setSelectedActivity] = useState(null);
@@ -75,14 +82,14 @@ const ApprovalPanel = ({ user, onUserUpdate }) => {
   };
 
   const loadActivities = useCallback(async () => {
-    if (mainTabValue !== 0 || !user || !user.contractor) {
+    if (mainTabValue !== 0 || !contractor) {
       setLoadingActivities(false);
       return;
     }
-    console.log("ApprovalPanel: Cargando actividades para contratista:", user.contractor);
+    console.log("ApprovalPanel: Cargando actividades para contratista:", contractor);
     setLoadingActivities(true);
     try {
-      const pendingActivities = await activitiesService.getPendingActivitiesByContractor(user.contractor);
+      const pendingActivities = await activitiesService.getPendingActivitiesByContractor(contractor);
       setActivities(pendingActivities);
     } catch (error) {
       console.error('Error al cargar actividades pendientes:', error);
@@ -94,22 +101,19 @@ const ApprovalPanel = ({ user, onUserUpdate }) => {
     } finally {
       setLoadingActivities(false);
     }
-  }, [user, mainTabValue]);
+  }, [contractor, mainTabValue]);
 
-  // Cargar todas las actividades para métricas de aprobación
+  // Cargar todas las actividades del contratista para métricas de aprobación
   const loadAllActivities = useCallback(async () => {
-    if (!user || !user.contractor) return;
+    if (!contractor) return;
     
     try {
-      const allActivitiesData = await activitiesService.getAllActivities();
-      const contractorActivities = allActivitiesData.filter(a => 
-        a && a.contractor === user.contractor
-      );
+      const contractorActivities = await activitiesService.getActivitiesByContractor(contractor);
       setAllActivities(contractorActivities);
     } catch (error) {
       console.error('Error al cargar todas las actividades:', error);
     }
-  }, [user]);
+  }, [contractor]);
 
   useEffect(() => {
     if (mainTabValue === 0) {
@@ -211,7 +215,8 @@ const ApprovalPanel = ({ user, onUserUpdate }) => {
       setLoading(true);
       try {
         await activitiesService.rejectActivity(confirmedActivity.id, rejectionReason, user);
-        setActivities(activities.filter(a => a.id !== confirmedActivity.id));
+        const rejectedId = confirmedActivity.id;
+        setActivities(prev => prev.filter(a => a.id !== rejectedId));
         setSnackbar({
           open: true,
           message: 'Actividad rechazada correctamente',
@@ -221,11 +226,18 @@ const ApprovalPanel = ({ user, onUserUpdate }) => {
         loadAllActivities(); // Recargar para actualizar métricas
       } catch (error) {
         console.error('Error al rechazar actividad:', error);
+        const serviceError = isServiceError(error);
         setSnackbar({
           open: true,
-          message: 'Error al rechazar actividad',
-          severity: 'error'
+          message: serviceError ? error.message : 'Error al rechazar actividad',
+          severity: serviceError ? 'warning' : 'error'
         });
+        if (serviceError) {
+          // La actividad cambió de estado (p. ej. ya fue revisada): cerrar el diálogo y refrescar la lista
+          handleCloseRejectDialog();
+          loadActivities();
+          loadAllActivities();
+        }
       } finally {
         setLoading(false);
       }
@@ -237,7 +249,7 @@ const ApprovalPanel = ({ user, onUserUpdate }) => {
     setLoading(true);
     try {
       await activitiesService.approveActivity(activity.id, user);
-      setActivities(activities.filter(a => a.id !== activity.id));
+      setActivities(prev => prev.filter(a => a.id !== activity.id));
       setSnackbar({
         open: true,
         message: 'Actividad aprobada correctamente',
@@ -246,11 +258,17 @@ const ApprovalPanel = ({ user, onUserUpdate }) => {
       loadAllActivities(); // Recargar para actualizar métricas
     } catch (error) {
       console.error('Error al aprobar actividad:', error);
+      const serviceError = isServiceError(error);
       setSnackbar({
         open: true,
-        message: 'Error al aprobar actividad',
-        severity: 'error'
+        message: serviceError ? error.message : 'Error al aprobar actividad',
+        severity: serviceError ? 'warning' : 'error'
       });
+      if (serviceError) {
+        // La actividad cambió de estado (p. ej. ya fue revisada): refrescar la lista de pendientes
+        loadActivities();
+        loadAllActivities();
+      }
     } finally {
       setLoading(false);
     }
