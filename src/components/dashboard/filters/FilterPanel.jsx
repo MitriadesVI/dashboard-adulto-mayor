@@ -6,6 +6,19 @@ import {
   Select, MenuItem, TextField, Button, Box, CircularProgress
 } from '@mui/material';
 import RefreshIcon from '@mui/icons-material/Refresh';
+import { CONTRACTORS } from '../../../config/contractors';
+
+// Opciones de los filtros (se exportan para describir los filtros aplicados en otras pestañas)
+export const ACTIVITY_TYPE_OPTIONS = [
+  { value: 'nutrition', label: 'Nutricional' },
+  { value: 'physical', label: 'Salud Física' },
+  { value: 'psychosocial', label: 'Psicosocial' }
+];
+
+export const LOCATION_TYPE_OPTIONS = [
+  { value: 'center', label: 'Centro Fijo' },
+  { value: 'park', label: 'Espacio Comunitario' }
+];
 
 const FilterPanel = ({
   filterContractor,
@@ -37,8 +50,9 @@ const FilterPanel = ({
               label="Contratista"
             >
               <MenuItem value="all">Todos</MenuItem>
-              <MenuItem value="CUC">CUC</MenuItem>
-              <MenuItem value="FUNDACARIBE">FUNDACARIBE</MenuItem>
+              {CONTRACTORS.map((contractor) => (
+                <MenuItem key={contractor.id} value={contractor.id}>{contractor.name}</MenuItem>
+              ))}
             </Select>
           </FormControl>
         </Grid>
@@ -52,9 +66,9 @@ const FilterPanel = ({
               label="Tipo Actividad"
             >
               <MenuItem value="all">Todos</MenuItem>
-              <MenuItem value="nutrition">Nutricional</MenuItem>
-              <MenuItem value="physical">Salud Física</MenuItem>
-              <MenuItem value="psychosocial">Psicosocial</MenuItem>
+              {ACTIVITY_TYPE_OPTIONS.map((option) => (
+                <MenuItem key={option.value} value={option.value}>{option.label}</MenuItem>
+              ))}
             </Select>
           </FormControl>
         </Grid>
@@ -68,8 +82,9 @@ const FilterPanel = ({
               label="Tipo Ubicación"
             >
               <MenuItem value="all">Todos</MenuItem>
-              <MenuItem value="center">Centro Fijo</MenuItem>
-              <MenuItem value="park">Espacio Comunitario</MenuItem>
+              {LOCATION_TYPE_OPTIONS.map((option) => (
+                <MenuItem key={option.value} value={option.value}>{option.label}</MenuItem>
+              ))}
             </Select>
           </FormControl>
         </Grid>

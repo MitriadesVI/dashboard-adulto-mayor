@@ -1,11 +1,13 @@
 // src/components/field/utils/fieldHelpers.js
 import {
   calculateUniqueAttendance,
+  calculateAverageAttendance,
   getActivityTypeLabel,
   getActivitySubtypeLabel,
   formatDate,
   getLocationType
 } from '../../dashboard/common/helpers';
+import { parseActivityDate, toDateKey, dateToKey, todayKey } from '../../../utils/dates';
 
 /**
  * Filtra las actividades para incluir solo las educativas.
@@ -21,8 +23,9 @@ export const getEducationalActivities = (activities) => {
 
 /**
  * Calcula los KPIs personales para el personal de campo.
- * @param {Array} userActivities - Actividades del usuario actual (ya filtradas por período).
- * @returns {Object} - Objeto con los KPIs: totalEducationalActivities, uniqueBeneficiaries, avgBeneficiariesPerActivity.
+ * @param {Array} userActivities - Actividades APROBADAS del usuario actual (ya filtradas por período).
+ * @returns {Object} - Objeto con los KPIs: totalEducationalActivities, uniqueBeneficiaries y
+ *   avgBeneficiariesPerActivity (asistencia promedio por jornada: ubicación + fecha + jornada).
  */
 export const calculateFieldUserKPIs = (userActivities) => {
   const educationalActivities = getEducationalActivities(userActivities);
@@ -30,10 +33,9 @@ export const calculateFieldUserKPIs = (userActivities) => {
   const totalEducationalActivities = educationalActivities.length;
   const uniqueBeneficiaries = calculateUniqueAttendance(educationalActivities);
 
-  const avgBeneficiariesPerActivity =
-    totalEducationalActivities > 0
-      ? Math.round(uniqueBeneficiaries / totalEducationalActivities)
-      : 0;
+  // Se divide por el número de jornadas (no por registros) para no diluir la asistencia
+  // cuando se registran varias actividades en la misma jornada.
+  const avgBeneficiariesPerActivity = calculateAverageAttendance(educationalActivities);
 
   return {
     totalEducationalActivities,
@@ -131,52 +133,29 @@ export const getStatsByModality = (userActivities) => {
 
 /**
  * Calcula la racha activa de días consecutivos registrando actividades educativas.
- * @param {Array} userActivities - Todas las actividades educativas del usuario (sin filtro de período).
+ * Usa claves 'YYYY-MM-DD' (hora local): varias actividades el mismo día cuentan una sola vez.
+ * Si hoy no hay actividades, la racha se cuenta hacia atrás desde ayer.
+ * @param {Array} userActivities - Todas las actividades del usuario (sin filtro de período).
  * @returns {number} - Número de días consecutivos de racha.
  */
 export const calculateActiveStreak = (userActivities) => {
-  const educationalActivities = getEducationalActivities(userActivities);
-  if (educationalActivities.length === 0) return 0;
+  const dateKeys = new Set(
+    getEducationalActivities(userActivities)
+      .map((act) => act.dateKey || toDateKey(act.date))
+      .filter(Boolean)
+  );
+  if (dateKeys.size === 0) return 0;
 
-  // Obtener fechas únicas de actividades educativas, ordenadas
-  const activityDates = [
-    ...new Set(
-      educationalActivities.map((act) => act.date)
-    ),
-  ].sort((a, b) => new Date(b) - new Date(a)); // Más reciente primero
-
-  if (activityDates.length === 0) return 0;
+  const cursor = parseActivityDate(todayKey());
+  // Si hoy no hay actividades, la racha puede seguir viva desde ayer
+  if (!dateKeys.has(dateToKey(cursor))) {
+    cursor.setDate(cursor.getDate() - 1);
+  }
 
   let streak = 0;
-  let currentDate = new Date(activityDates[0]);
-  currentDate.setHours(0,0,0,0);
-
-  // Verificar si la actividad más reciente es hoy o ayer para iniciar la racha
-  const today = new Date();
-  today.setHours(0,0,0,0);
-  const yesterday = new Date(today);
-  yesterday.setDate(today.getDate() - 1);
-  
-  if (currentDate.getTime() === today.getTime() || currentDate.getTime() === yesterday.getTime()) {
-    streak = 1;
-    if (activityDates.length > 1) {
-        for (let i = 1; i < activityDates.length; i++) {
-            const previousDay = new Date(currentDate);
-            previousDay.setDate(currentDate.getDate() - 1);
-            const activityDate = new Date(activityDates[i]);
-            activityDate.setHours(0,0,0,0);
-
-            if (activityDate.getTime() === previousDay.getTime()) {
-                streak++;
-                currentDate = activityDate;
-            } else {
-                break; // Se rompió la racha
-            }
-        }
-    }
-  } else {
-    // Si la última actividad no es de hoy ni de ayer, no hay racha activa.
-    return 0;
+  while (dateKeys.has(dateToKey(cursor))) {
+    streak++;
+    cursor.setDate(cursor.getDate() - 1);
   }
 
   return streak;
@@ -243,6 +222,7 @@ export const prepareDataForCSVExport = (activitiesToExport, contractor) => {
 
       return {
         Fecha: formatDate(activity.date),
+        Estado: activity.status === 'approved' ? 'Aprobada' : 'Pendiente',
         Tipo: tipo,
         Subtipo: subtipo,
         Contratista: activity.contractor || '',
@@ -250,10 +230,19 @@ export const prepareDataForCSVExport = (activitiesToExport, contractor) => {
         'Tipo Ubicacion': tipoUbicacion,
         Jornada: jornada,
         Beneficiarios: activity.totalBeneficiaries || 0,
-        Descripcion: descripcion.replace(/"/g, '""'), // Escapar comillas para CSV
+        Descripcion: descripcion, // El escapado de comillas lo hace el generador de CSV
       };
     });
 };
+
+/**
+ * Actividades cuya fecha (día local) cae entre startDate y endDate, ambos inclusive.
+ */
+export const filterByDateRange = (activities, startDate, endDate) =>
+  (activities || []).filter((act) => {
+    const actDate = parseActivityDate(act?.date);
+    return !!actDate && actDate >= startDate && actDate <= endDate;
+  });
 
 /**
  * Compara al usuario actual con sus colegas del mismo contratista.
@@ -266,14 +255,17 @@ export const getComparativeData = (
   periodStartDate,
   periodEndDate
 ) => {
-  // 1. Filtrar actividades de colegas del mismo contratista y del período actual
-  const colleaguesActivitiesInPeriod = allActivitiesCollection.filter(act =>
-    act.contractor === currentUserContractor &&
-    act.createdBy.uid !== currentUserId &&
-    act.createdBy.role === 'field' &&
-    act.educationalActivity?.included === true &&
-    new Date(act.date) >= periodStartDate &&
-    new Date(act.date) <= periodEndDate
+  // 1. Filtrar actividades (aprobadas) de colegas del mismo contratista y del período actual
+  const colleaguesActivitiesInPeriod = filterByDateRange(
+    allActivitiesCollection.filter(act =>
+      act.contractor === currentUserContractor &&
+      act.status === 'approved' &&
+      act.createdBy?.uid !== currentUserId &&
+      act.createdBy?.role === 'field' &&
+      act.educationalActivity?.included === true
+    ),
+    periodStartDate,
+    periodEndDate
   );
 
   // 2. Agrupar actividades de colegas por UID
@@ -378,7 +370,7 @@ export const generateAchievements = (comparativeData, contractor) => {
   if (bestAverageUser && bestAverageUser.uid === currentUserMetrics.uid && currentUserMetrics.avgBeneficiariesPerActivity > 0) {
     achievements.push({
       title: '🌟 Mejor Promedio',
-      description: `¡Excelente promedio de ${currentUserMetrics.avgBeneficiariesPerActivity} beneficiarios por actividad!`,
+      description: `¡Excelente promedio de ${currentUserMetrics.avgBeneficiariesPerActivity} beneficiarios por jornada!`,
       value: currentUserMetrics.avgBeneficiariesPerActivity
     });
   }
@@ -477,10 +469,8 @@ export const generateInsights = (
     const daysOfWeek = ['Domingo', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado'];
     const activityCountByDay = Array(7).fill(0);
     userActivitiesFullHistory.forEach(act => {
-      try {
-        const dayIndex = new Date(act.date).getDay();
-        activityCountByDay[dayIndex]++;
-      } catch (e) { /* ignorar fechas inválidas */ }
+      const actDate = parseActivityDate(act.date);
+      if (actDate) activityCountByDay[actDate.getDay()]++; // ignora fechas inválidas
     });
 
     const maxActivities = Math.max(...activityCountByDay);
@@ -537,59 +527,52 @@ export const generateInsights = (
   return insights;
 };
 
+const PERIOD_DAYS = { '7days': 7, '30days': 30, '90days': 90 };
+
 /**
- * Obtiene las fechas de inicio y fin para un período dado.
+ * Obtiene las fechas de inicio y fin para un período dado, con límites de día local:
+ * el inicio es las 00:00 del primer día y el fin las 23:59:59.999 del día de referencia.
  */
 export const getDateRangeForPeriod = (period, referenceDate = new Date()) => {
-  const endDate = new Date(referenceDate);
-  endDate.setHours(23, 59, 59, 999);
+  const days = PERIOD_DAYS[period] || 1;
+  const year = referenceDate.getFullYear();
+  const month = referenceDate.getMonth();
+  const day = referenceDate.getDate();
 
-  const startDate = new Date(referenceDate);
-  startDate.setHours(0, 0, 0, 0);
-
-  if (period === '7days') {
-    startDate.setDate(endDate.getDate() - 6);
-  } else if (period === '30days') {
-    startDate.setDate(endDate.getDate() - 29);
-  } else if (period === '90days') {
-    startDate.setDate(endDate.getDate() - 89);
-  }
-  return { startDate, endDate };
+  return {
+    startDate: new Date(year, month, day - (days - 1)),
+    endDate: new Date(year, month, day, 23, 59, 59, 999)
+  };
 };
 
 /**
  * Obtiene las actividades del usuario para un período específico y el período anterior.
+ * Solo se consideran actividades APROBADAS: las pendientes y rechazadas no cuentan en los KPIs.
  */
 export const fetchUserActivitiesForPeriodAndComparison = async (
   userId,
   period,
   allUserActivitiesFromDB
 ) => {
-  const today = new Date();
-
   // Período actual
-  const { startDate: currentStartDate, endDate: currentEndDate } = getDateRangeForPeriod(period, today);
+  const { startDate: currentStartDate, endDate: currentEndDate } = getDateRangeForPeriod(period);
 
-  // Período anterior
-  const previousPeriodEndDate = new Date(currentStartDate);
-  previousPeriodEndDate.setDate(currentStartDate.getDate() - 1);
-  const { startDate: previousStartDate } = getDateRangeForPeriod(period, previousPeriodEndDate);
+  // Período anterior: termina el día anterior al inicio del período actual
+  const dayBeforeCurrentStart = new Date(
+    currentStartDate.getFullYear(), currentStartDate.getMonth(), currentStartDate.getDate() - 1
+  );
+  const { startDate: previousStartDate, endDate: previousEndDate } = getDateRangeForPeriod(period, dayBeforeCurrentStart);
 
-  const filterActivitiesByDateRange = (activities, startDate, endDate) => {
-    return activities.filter(act => {
-      const actDate = new Date(act.date);
-      return actDate >= startDate && actDate <= endDate;
-    });
-  };
-  
-  const educationalActivitiesFullHistory = getEducationalActivities(allUserActivitiesFromDB);
+  const approvedActivities = (allUserActivitiesFromDB || []).filter(act => act?.status === 'approved');
+
+  const educationalActivitiesFullHistory = getEducationalActivities(approvedActivities);
 
   const currentPeriodActivities = getEducationalActivities(
-    filterActivitiesByDateRange(allUserActivitiesFromDB, currentStartDate, currentEndDate)
+    filterByDateRange(approvedActivities, currentStartDate, currentEndDate)
   );
 
   const previousPeriodActivities = getEducationalActivities(
-    filterActivitiesByDateRange(allUserActivitiesFromDB, previousStartDate, previousPeriodEndDate)
+    filterByDateRange(approvedActivities, previousStartDate, previousEndDate)
   );
   
   return {

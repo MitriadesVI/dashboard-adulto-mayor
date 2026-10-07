@@ -3,6 +3,7 @@ import React from 'react';
 import { Button } from '@mui/material';
 import FileDownloadIcon from '@mui/icons-material/FileDownload';
 import { prepareDataForCSVExport } from '../utils/fieldHelpers';
+import { dateToKey } from '../../../utils/dates';
 
 const FieldExportButton = ({ activities, userContractor, dateRange, periodLabel }) => {
   
@@ -17,7 +18,7 @@ const FieldExportButton = ({ activities, userContractor, dateRange, periodLabel 
     // Agregar filas de datos
     data.forEach(row => {
       const values = headers.map(header => {
-        let value = row[header] || '';
+        let value = row[header] ?? '';
         // Convertir a string y escapar comillas
         value = String(value).replace(/"/g, '""');
         // Envolver en comillas si contiene comas
@@ -31,7 +32,7 @@ const FieldExportButton = ({ activities, userContractor, dateRange, periodLabel 
     
     // Crear y descargar archivo
     try {
-      const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+      const blob = new Blob(['\uFEFF' + csvContent], { type: 'text/csv;charset=utf-8;' }); // BOM: Excel lee bien las tildes
       const url = URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.setAttribute('href', url);
@@ -53,14 +54,10 @@ const FieldExportButton = ({ activities, userContractor, dateRange, periodLabel 
       return;
     }
 
-    console.log('Actividades a exportar:', activities.length);
-
     // Filtrar solo actividades aprobadas y pendientes
     const activitiesToExport = activities.filter(
       (activity) => activity && (activity.status === 'approved' || activity.status === 'pending')
     );
-    
-    console.log('Actividades después del filtro:', activitiesToExport.length);
     
     if (activitiesToExport.length === 0) {
         alert('No hay actividades aprobadas o pendientes para exportar en el período seleccionado.');
@@ -70,16 +67,11 @@ const FieldExportButton = ({ activities, userContractor, dateRange, periodLabel 
     // Preparar datos usando el helper corregido
     const dataForCSV = prepareDataForCSVExport(activitiesToExport, userContractor);
     
-    console.log('Datos preparados para CSV:', dataForCSV.length);
-    console.log('Muestra de datos:', dataForCSV.slice(0, 3));
-
     if (dataForCSV && dataForCSV.length > 0) {
-      // Generar nombre de archivo con rango de fechas
-      const startDateStr = dateRange.currentStartDate.toISOString().slice(0, 10);
-      const endDateStr = dateRange.currentEndDate.toISOString().slice(0, 10);
+      // Generar nombre de archivo con rango de fechas (en hora local, no UTC)
+      const startDateStr = dateToKey(dateRange.currentStartDate);
+      const endDateStr = dateToKey(dateRange.currentEndDate);
       const fileName = `reporte_actividades_${userContractor}_${startDateStr}_a_${endDateStr}.csv`;
-      
-      console.log('Generando CSV con nombre:', fileName);
       
       // Usar función directa de CSV
       generateCSVDirect(dataForCSV, fileName);

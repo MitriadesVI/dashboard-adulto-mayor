@@ -7,6 +7,7 @@ import {
 import ZoomInIcon from '@mui/icons-material/ZoomIn';
 import AssessmentIcon from '@mui/icons-material/Assessment';
 import LocationOnIcon from '@mui/icons-material/LocationOn';
+import { todayKey } from '../../../../utils/dates';
 
 const LocationAnalysisFilters = ({ 
   availableLocations, 
@@ -16,12 +17,13 @@ const LocationAnalysisFilters = ({
   const [selectedLocation, setSelectedLocation] = useState('');
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
-  const [selectedMonth, setSelectedMonth] = useState(new Date().toISOString().slice(0, 7));
+  const [selectedMonth, setSelectedMonth] = useState(todayKey().slice(0, 7));
 
   const selectedLocationInfo = availableLocations.find(loc => loc.name === selectedLocation);
+  const invalidRange = !!startDate && !!endDate && startDate > endDate;
 
   const handleAnalyze = () => {
-    if (!selectedLocation || !selectedLocationInfo) return;
+    if (!selectedLocation || !selectedLocationInfo || invalidRange) return;
     
     onAnalyze(selectedLocationInfo, {
       startDate,
@@ -79,6 +81,8 @@ const LocationAnalysisFilters = ({
               type="date"
               value={endDate}
               onChange={(e) => setEndDate(e.target.value)}
+              error={invalidRange}
+              helperText={invalidRange ? 'Debe ser posterior a la fecha de inicio' : undefined}
               InputLabelProps={{ shrink: true }}
             />
           </Grid>
@@ -97,7 +101,7 @@ const LocationAnalysisFilters = ({
               fullWidth
               variant="contained"
               onClick={handleAnalyze}
-              disabled={!selectedLocation || loading}
+              disabled={!selectedLocation || loading || invalidRange}
               startIcon={loading ? <CircularProgress size={20} /> : <AssessmentIcon />}
               sx={{ height: '56px' }}
             >

@@ -27,12 +27,7 @@ import activitiesService from './services/activitiesService';
 import goalsService from './services/goalsService';
 import localStorageService from './services/localStorageService';
 import { startOfDay, endOfDay, parseActivityDate } from './utils/dates';
-
-// Filtro por tipo de actividad (modelo actual: educationalActivity / nutritionDelivery)
-const matchesActivityType = (activity, type) => {
-  if (activity?.educationalActivity?.included && activity.educationalActivity.type === type) return true;
-  return type === 'nutrition' && Boolean(activity?.nutritionDelivery?.included);
-};
+import { matchesActivityType } from './components/dashboard/common/helpers';
 
 // Cambios del perfil que obligan a actualizar el usuario guardado localmente
 const profileChanged = (a, b) =>
@@ -215,17 +210,13 @@ function App() {
   useEffect(() => {
     if (user && user.role === 'district' && authCompleted) { 
       console.log("📊 Usuario distrito detectado, cargando datos iniciales...");
-      // Pequeño delay para asegurar que el componente esté montado
-      const timer = setTimeout(() => {
-        loadDashboardData({
-          contractor: 'all',
-          type: 'all',
-          locationType: 'all',
-          startDate: '',
-          endDate: ''
-        });
-      }, 300);
-      return () => clearTimeout(timer);
+      loadDashboardData({
+        contractor: 'all',
+        type: 'all',
+        locationType: 'all',
+        startDate: '',
+        endDate: ''
+      });
     }
   }, [user, authCompleted, loadDashboardData]);
 

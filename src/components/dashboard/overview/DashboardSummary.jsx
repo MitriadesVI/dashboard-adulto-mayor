@@ -1,14 +1,13 @@
 // src/components/dashboard/overview/DashboardSummary.jsx
 
 import React from 'react';
-import { Paper, Typography, Button, Box } from '@mui/material';
+import { Paper, Typography, Button } from '@mui/material';
 import CloudDownloadIcon from '@mui/icons-material/CloudDownload';
+import { calculateUniqueAttendance } from '../common/helpers';
 
 const DashboardSummary = ({ activities, filteredActivities, onExportCSV }) => {
-  // Función para calcular total de beneficiarios
-  const getTotalBeneficiaries = () => 
-    filteredActivities.reduce((sum, activity) => 
-      sum + (Number(activity?.beneficiaries) || 0), 0);
+  // Total de beneficiarios sin doble conteo (el mismo valor que muestra el KPI del Dashboard)
+  const getTotalBeneficiaries = () => calculateUniqueAttendance(filteredActivities);
 
   return (
     <Paper sx={{ p: 2, mb: 3, bgcolor: 'info.light', color: 'info.contrastText' }}>
@@ -16,14 +15,14 @@ const DashboardSummary = ({ activities, filteredActivities, onExportCSV }) => {
       <Typography variant="body2">
         Activities recibidas: {activities ? activities.length : 'ninguna'}<br />
         Activities filtradas: {filteredActivities ? filteredActivities.length : '0'}<br />
-        Total beneficiarios: {getTotalBeneficiaries()}<br />
+        Total beneficiarios (únicos): {getTotalBeneficiaries()}<br />
         <Button 
           size="small" 
           variant="contained" 
           color="inherit" 
           startIcon={<CloudDownloadIcon />} 
           onClick={onExportCSV}
-          disabled={!filteredActivities.length}
+          disabled={!filteredActivities?.length}
           sx={{ mt: 1 }}
         >
           Exportar CSV

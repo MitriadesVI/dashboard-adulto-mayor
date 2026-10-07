@@ -1,5 +1,7 @@
 // src/components/dashboard/ubicaciones/utils/chartDataProcessing.js
 
+import { getActivitySubtypeLabel } from '../../common/helpers';
+
 export const generateChartData = (dayGroups, temporalAnalysis) => {
   // 1. Procesar datos para tendencias semanales
   const weeklyTrend = Object.values(temporalAnalysis.weeklyAverages)
@@ -46,7 +48,7 @@ export const generateChartData = (dayGroups, temporalAnalysis) => {
 };
 
 const processComponentsForChart = (dayGroups) => {
-  const strategiesCount = {};
+  const strategiesMap = {};
   const componentsCount = { nutrition: 0, physical: 0, psychosocial: 0 };
 
   dayGroups.forEach(group => {
@@ -54,37 +56,26 @@ const processComponentsForChart = (dayGroups) => {
       // Contar actividades educativas por tipo/estrategia
       if (activity.educationalActivity && activity.educationalActivity.included) {
         const type = activity.educationalActivity.type;
+        if (!type) return;
         const subtype = activity.educationalActivity.subtype || 'Sin especificar';
-        const strategyKey = `${type}-${subtype}`;
         
-        strategiesCount[strategyKey] = (strategiesCount[strategyKey] || 0) + 1;
+        // Etiqueta según el contratista real de la actividad (helpers.js)
+        const strategyLabel = getActivitySubtypeLabel(type, subtype, activity.contractor);
+        const strategyKey = `${type}-${strategyLabel}`;
+        
+        if (!strategiesMap[strategyKey]) {
+          strategiesMap[strategyKey] = { id: strategyKey, component: type, strategy: strategyLabel, count: 0, percentage: 0 };
+        }
+        strategiesMap[strategyKey].count += 1;
         componentsCount[type] = (componentsCount[type] || 0) + 1;
       }
       
       // IMPORTANTE: Las entregas nutricionales NO son actividades educativas
       // Solo las contamos como beneficios separados, no como estrategias
-      if (activity.nutritionDelivery && activity.nutritionDelivery.included) {
-        // NO incrementar componentsCount.nutrition aquí
-        // Las entregas son beneficios, no actividades educativas
-      }
     });
   });
 
-  // Convertir a formato para gráficos
-  const strategiesArray = Object.entries(strategiesCount).map(([key, count]) => {
-    const [component, strategy] = key.split('-');
-    
-    // Usar las funciones de helpers.js para obtener etiquetas correctas
-    const strategyLabel = getActivitySubtypeLabel(component, strategy, 'CUC'); // Asumimos CUC por defecto
-    
-    return {
-      id: key,
-      component,
-      strategy: strategyLabel,
-      count,
-      percentage: 0 // Se calculará después
-    };
-  });
+  const strategiesArray = Object.values(strategiesMap);
 
   // Calcular porcentajes basado solo en actividades educativas
   const totalEducationalActivities = strategiesArray.reduce((sum, item) => sum + item.count, 0);
@@ -104,36 +95,6 @@ const processComponentsForChart = (dayGroups) => {
           ((count / totalEducationalActivities) * 100).toFixed(1) : 0
       }))
   };
-};
-
-// Importar funciones de helpers.js (replicadas aquí para evitar dependencias circulares)
-const getActivitySubtypeLabel = (type, subtype, contractor) => {
-  if (!type || !subtype) return 'Subtipo Desconocido';
-  
-  const subtypeMap = {
-    nutrition: {
-      workshop: contractor === 'CUC' ? 'Taller educativo del cuidado nutricional' : 'Jornada de promoción de la salud nutricional'
-    },
-    physical: {
-      prevention: 'Charlas de prevención de enfermedad',
-      therapeutic: 'Actividad física terapéutica',
-      rumba: 'Rumbaterapia y ejercicios dirigidos',
-      walking: 'Club de caminantes'
-    },
-    psychosocial: {
-      mental: 'Jornadas/talleres en salud mental',
-      cognitive: 'Jornadas/talleres cognitivos',
-      abuse: 'Talleres en prevención al maltrato',
-      arts: 'Talleres en artes y oficios',
-      intergenerational: 'Encuentros intergeneracionales'
-    }
-  };
-
-  if (subtypeMap[type] && subtypeMap[type][subtype]) {
-    return subtypeMap[type][subtype];
-  }
-
-  return subtype.charAt(0).toUpperCase() + subtype.slice(1);
 };
 
 const formatComponentName = (component) => {

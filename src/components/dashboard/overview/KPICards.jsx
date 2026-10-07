@@ -1,6 +1,6 @@
 // src/components/dashboard/overview/KPICards.jsx
 
-import React from 'react';
+import React, { useMemo } from 'react';
 import { Grid } from '@mui/material';
 import DashboardCard from '../common/DashboardCard';
 import PeopleIcon from '@mui/icons-material/People';
@@ -12,77 +12,43 @@ import FastfoodIcon from '@mui/icons-material/Fastfood';
 import { 
   getNutritionCountByLocationType, 
   getLocationType,
-  calculateUniqueAttendance  // ← NUEVA IMPORTACIÓN
+  calculateUniqueAttendance,
+  calculateAverageAttendance
 } from '../common/helpers';
 
-const KPICards = ({ activities }) => {
-  // Contar solo actividades educativas
-  const getTotalActivities = () => {
-    if (!activities || !Array.isArray(activities)) return 0;
-    
-    return activities.filter(activity => 
-      activity?.educationalActivity?.included === true
-    ).length;
-  };
-  
-  // ========== FUNCIÓN CORREGIDA: EVITA DOBLE CONTEO ==========
-  const getTotalBeneficiaries = () => {
-    if (!activities || !Array.isArray(activities)) return 0;
-    
-    // ANTES: return activities?.reduce((sum, activity) => sum + (Number(activity?.totalBeneficiaries) || 0), 0) || 0;
-    
-    // DESPUÉS: Usar función que evita duplicados
-    return calculateUniqueAttendance(activities);
-  };
-  
-  // Contar ubicaciones únicas
-  const getUniqueLocations = () => {
-    if (!activities?.length) return 0;
-    const locationNames = new Set();
-    activities.forEach(activity => {
-      if (activity?.location?.name) {
-        locationNames.add(activity.location.name);
-      }
-    });
-    return locationNames.size;
-  };
-  
-  // ========== FUNCIÓN CORREGIDA: CALCULAR PROMEDIOS SIN DUPLICADOS ==========
-  const getAverageAttendanceByType = () => {
-    // Filtrar solo actividades educativas
-    const educationalActivities = activities?.filter(a => 
-      a?.educationalActivity?.included === true
-    ) || [];
-    
-    if (educationalActivities.length === 0) {
-      return { total: 0, center: 0, park: 0 };
-    }
-    
-    // Usar función corregida para cada modalidad
-    const centerActivities = educationalActivities.filter(a => 
-      getLocationType(a?.location) === 'center'
-    );
-    
-    const parkActivities = educationalActivities.filter(a => 
-      getLocationType(a?.location) === 'park'
-    );
-    
-    // Calcular beneficiarios únicos por modalidad
-    const totalBeneficiaries = calculateUniqueAttendance(educationalActivities);
-    const centerBeneficiaries = calculateUniqueAttendance(centerActivities);
-    const parkBeneficiaries = calculateUniqueAttendance(parkActivities);
-    
-    // Calcular promedios
-    return {
-      total: educationalActivities.length > 0 ? Math.round(totalBeneficiaries / educationalActivities.length) : 0,
-      center: centerActivities.length > 0 ? Math.round(centerBeneficiaries / centerActivities.length) : 0,
-      park: parkActivities.length > 0 ? Math.round(parkBeneficiaries / parkActivities.length) : 0
-    };
-  };
+// Calcula todos los indicadores de una vez (se memoiza por actividades)
+const calculateKPIs = (activities) => {
+  const list = Array.isArray(activities) ? activities.filter(Boolean) : [];
 
-  // Estadísticas de raciones/meriendas
-  const nutritionStats = getNutritionCountByLocationType(activities);
-  const averages = getAverageAttendanceByType();
+  // Solo actividades educativas (excluye entregas de alimentos)
+  const educationalActivities = list.filter(activity => 
+    activity.educationalActivity?.included === true
+  );
+  const centerActivities = educationalActivities.filter(a => getLocationType(a.location) === 'center');
+  const parkActivities = educationalActivities.filter(a => getLocationType(a.location) === 'park');
+
+  const locationNames = new Set(list.map(a => a.location?.name).filter(Boolean));
+
+  return {
+    totalActivities: educationalActivities.length,
+    // Asistencia sin doble conteo (máximo por ubicación + fecha + jornada)
+    totalBeneficiaries: calculateUniqueAttendance(list),
+    uniqueLocations: locationNames.size,
+    // Promedio de asistencia por jornada de servicio (asistencia única / número de jornadas)
+    averages: {
+      total: calculateAverageAttendance(educationalActivities),
+      center: calculateAverageAttendance(centerActivities),
+      park: calculateAverageAttendance(parkActivities)
+    },
+    nutritionStats: getNutritionCountByLocationType(list)
+  };
+};
+
+const KPICards = ({ activities }) => {
+  const { totalActivities, totalBeneficiaries, uniqueLocations, averages, nutritionStats } = useMemo(
+    () => calculateKPIs(activities),
+    [activities]
+  );
   
   return (
     <Grid container spacing={3}>
@@ -90,7 +56,7 @@ const KPICards = ({ activities }) => {
       <Grid item xs={12} sm={6} md={3}>
         <DashboardCard 
           title="Total Actividades"
-          value={getTotalActivities()}
+          value={totalActivities}
           icon={<EventNoteIcon sx={{ fontSize: 40 }} />}
           color="primary"
           subtitle="Excluye entregas de alimentos"
@@ -101,7 +67,7 @@ const KPICards = ({ activities }) => {
       <Grid item xs={12} sm={6} md={3}>
         <DashboardCard 
           title="Total Beneficiarios"
-          value={getTotalBeneficiaries()}
+          value={totalBeneficiaries}
           icon={<PeopleIcon sx={{ fontSize: 40 }} />}
           color="success"
           subtitle="Evita duplicados por jornada"
@@ -112,7 +78,7 @@ const KPICards = ({ activities }) => {
       <Grid item xs={12} sm={6} md={3}>
         <DashboardCard 
           title="Ubicaciones Atendidas"
-          value={getUniqueLocations()}
+          value={uniqueLocations}
           icon={<LocationOnIcon sx={{ fontSize: 40 }} />}
           color="secondary"
         />
@@ -123,7 +89,7 @@ const KPICards = ({ activities }) => {
         <DashboardCard 
           title="Promedio Asistentes"
           value={averages.total}
-          subtitle="Por actividad real"
+          subtitle="Por jornada de servicio"
           icon={<AssignmentTurnedInIcon sx={{ fontSize: 40 }} />}
           color="warning"
         />
@@ -134,7 +100,7 @@ const KPICards = ({ activities }) => {
         <DashboardCard 
           title="Promedio Asistentes"
           value={averages.center}
-          subtitle="En Centros de Vida"
+          subtitle="Por jornada, en Centros de Vida"
           icon={<AssignmentTurnedInIcon sx={{ fontSize: 40 }} />}
           color="info"
         />
@@ -145,7 +111,7 @@ const KPICards = ({ activities }) => {
         <DashboardCard 
           title="Promedio Asistentes"
           value={averages.park}
-          subtitle="En Parques/Espacios"
+          subtitle="Por jornada, en Parques/Espacios"
           icon={<AssignmentTurnedInIcon sx={{ fontSize: 40 }} />}
           color="error"
         />

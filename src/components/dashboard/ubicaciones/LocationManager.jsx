@@ -1,6 +1,6 @@
 // src/components/dashboard/ubicaciones/LocationManager.jsx
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   Card, CardHeader, CardContent, Grid, TextField, Button,
   List, ListItem, ListItemText, ListItemSecondaryAction,
@@ -12,11 +12,13 @@ import EditIcon from '@mui/icons-material/Edit';
 import DeleteIcon from '@mui/icons-material/Delete';
 import AddIcon from '@mui/icons-material/Add';
 import AssignmentIcon from '@mui/icons-material/Assignment';
-import FilterListIcon from '@mui/icons-material/FilterList';
-import LocationOnIcon from '@mui/icons-material/LocationOn';
 
 // Importar el servicio de ubicaciones
 import locationsService from '../../../services/locationsService';
+import { CONTRACTORS } from '../../../config/contractors';
+import { getLocationType } from '../common/helpers';
+
+const contractors = CONTRACTORS;
 
 // Componente TabPanel para manejar el contenido de las pestañas
 function TabPanel(props) {
@@ -37,8 +39,6 @@ function TabPanel(props) {
 const LocationManager = ({ user }) => {
   // Estados para manejar datos
   const [locations, setLocations] = useState([]);
-  const [filteredLocations, setFilteredLocations] = useState([]);
-  const [contractors, setContractors] = useState([{ id: 'CUC', name: 'CUC' }, { id: 'FUNDACARIBE', name: 'FUNDACARIBE' }]);
   
   // Estados para UI
   const [loading, setLoading] = useState(true);
@@ -70,13 +70,11 @@ const LocationManager = ({ user }) => {
       try {
         const locationsData = await locationsService.getAllLocations();
         setLocations(locationsData);
-        setFilteredLocations(locationsData);
       } catch (err) {
         console.error("Error al cargar ubicaciones:", err);
         setError("Error al cargar ubicaciones. Por favor, intente de nuevo.");
         // Usar datos vacíos en caso de error
         setLocations([]);
-        setFilteredLocations([]);
       } finally {
         setLoading(false);
       }
@@ -85,46 +83,31 @@ const LocationManager = ({ user }) => {
     loadLocations();
   }, []);
   
-  // Efecto para filtrar ubicaciones cuando cambian los filtros o las pestañas
-  useEffect(() => {
-    if (!locations.length) {
-      setFilteredLocations([]);
-      return;
+  // Ubicaciones filtradas por los filtros de contratista y tipo (al cambiar de pestaña se reinician,
+  // así que solo aplican los que se muestran en la pestaña actual)
+  const filteredLocations = useMemo(() => {
+    let filtered = locations;
+    
+    // Contratista: 'all' no filtra y '' es "Sin asignar"
+    if (filterContractor !== 'all') {
+      filtered = filtered.filter(location => (location.contractor || '') === filterContractor);
     }
     
-    let filtered = [...locations];
-    
-    // Filtrar por contratista si no es 'all' y no estamos en la pestaña de todos (0)
-    if (filterContractor !== 'all' && tabValue !== 0) {
-      filtered = filtered.filter(location => location.contractor === filterContractor);
+    // Tipo (centro / parque): 'all' no filtra
+    if (filterType !== 'all') {
+      filtered = filtered.filter(location => getLocationType(location) === filterType);
     }
     
-    // Filtrar por tipo si no es 'all' y estamos en la pestaña de modalidad (2)
-    if (filterType !== 'all' && tabValue === 2) {
-      filtered = filtered.filter(location => location.type === filterType);
-    }
-    
-    // En la pestaña de contratistas (1), agrupar por contratista automáticamente
-    if (tabValue === 1) {
-      // Esta pestaña ya se filtra solo por contratista
-    }
-    
-    setFilteredLocations(filtered);
-  }, [locations, filterContractor, filterType, tabValue]);
+    return filtered;
+  }, [locations, filterContractor, filterType]);
   
   // Manejadores de eventos para tabs
   const handleTabChange = (event, newValue) => {
     setTabValue(newValue);
     
     // Reset filtros al cambiar de pestaña
-    if (newValue === 0) {
-      setFilterContractor('all');
-      setFilterType('all');
-    } else if (newValue === 1) {
-      setFilterType('all');
-    } else if (newValue === 2) {
-      setFilterContractor('all');
-    }
+    setFilterContractor('all');
+    setFilterType('all');
   };
   
   // Manejadores para diálogos
@@ -259,11 +242,11 @@ const LocationManager = ({ user }) => {
                         py: 0.3, 
                         borderRadius: 1, 
                         fontSize: '0.75rem',
-                        bgcolor: location.type === 'center' ? 'primary.light' : 'secondary.light',
+                        bgcolor: getLocationType(location) === 'center' ? 'primary.light' : 'secondary.light',
                         color: 'white'
                       }}
                     >
-                      {location.type === 'center' ? 'Centro Fijo' : 'Parque/Espacio Comunitario'}
+                      {getLocationType(location) === 'center' ? 'Centro Fijo' : 'Parque/Espacio Comunitario'}
                     </Box>
                   </Box>
                 }
@@ -352,8 +335,8 @@ const LocationManager = ({ user }) => {
   // Agrupar ubicaciones por tipo para la pestaña de modalidad
   const getLocationsByType = () => {
     return {
-      center: filteredLocations.filter(location => location.type === 'center'),
-      park: filteredLocations.filter(location => location.type === 'park'),
+      center: filteredLocations.filter(location => getLocationType(location) === 'center'),
+      park: filteredLocations.filter(location => getLocationType(location) === 'park'),
     };
   };
   

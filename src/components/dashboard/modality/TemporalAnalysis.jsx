@@ -25,7 +25,7 @@ const TemporalAnalysis = ({ activities, title = "Análisis Temporal por Modalida
 
   // Preparar datos para tendencia semanal
   const weeklyTrend = Object.entries(temporalData.byWeek)
-    .sort()
+    .sort(([weekA], [weekB]) => weekA.localeCompare(weekB)) // '2026-W05' ordena cronológicamente
     .map(([week, data]) => ({
       week,
       'Centros': data.center,
@@ -192,7 +192,7 @@ const TemporalAnalysis = ({ activities, title = "Análisis Temporal por Modalida
                      {intensity}
                    </Typography>
                    {isWeekend && intensity > 0 && (
-                     <Chip label="Weekend" size="small" sx={{ ml: 1 }} />
+                     <Chip label="Fin de semana" size="small" sx={{ ml: 1 }} />
                    )}
                  </Box>
                );
@@ -231,7 +231,7 @@ const TemporalAnalysis = ({ activities, title = "Análisis Temporal por Modalida
                      {intensity}
                    </Typography>
                    {isWeekend && intensity > 0 && (
-                     <Chip label="Weekend" size="small" sx={{ ml: 1 }} />
+                     <Chip label="Fin de semana" size="small" sx={{ ml: 1 }} />
                    )}
                  </Box>
                );

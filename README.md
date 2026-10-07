@@ -24,6 +24,13 @@ npm start        # http://localhost:3000
 npm run build    # build de producción (Netlify publica la carpeta build/)
 ```
 
+Para probar sin tocar la base real, con los emuladores de Firebase:
+
+```bash
+firebase emulators:start --only auth,firestore      # en otra terminal
+REACT_APP_USE_EMULATORS=true npm start
+```
+
 ## Configuración
 
 - **Contratistas:** se definen en `src/config/contractors.js` (id guardado en Firestore,

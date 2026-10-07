@@ -5,7 +5,7 @@ import {
   Chip, Alert, Card, CardContent
 } from '@mui/material';
 import { 
-  PieChart, Pie, Cell, ResponsiveContainer, Tooltip, Legend, 
+  PieChart, Pie, Cell, ResponsiveContainer, Tooltip, 
   BarChart, Bar, XAxis, YAxis, CartesianGrid
 } from 'recharts';
 

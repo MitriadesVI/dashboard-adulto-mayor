@@ -1,8 +1,8 @@
 // src/components/dashboard/modality/PerformanceComparison.jsx
 
-import React from 'react';
+import React, { useMemo } from 'react';
 import { 
-  Card, CardContent, CardHeader, Grid, Typography, Box,
+  Card, CardContent, CardHeader, Typography, Box,
   Table, TableBody, TableCell, TableContainer, TableHead, TableRow,
   Chip, LinearProgress
 } from '@mui/material';
@@ -11,9 +11,10 @@ import {
   Tooltip, Legend, RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, Radar
 } from 'recharts';
 import { getPerformanceComparisons } from '../common/helpers';
+import { getContractorColor } from '../../../config/contractors';
 
 const PerformanceComparison = ({ activities, title = "Análisis Comparativo de Rendimiento" }) => {
-  const comparisons = getPerformanceComparisons(activities);
+  const comparisons = useMemo(() => getPerformanceComparisons(activities), [activities]);
 
   // Preparar datos para gráfico de barras
   const chartData = Object.entries(comparisons.combined).map(([key, data]) => ({
@@ -27,14 +28,23 @@ const PerformanceComparison = ({ activities, title = "Análisis Comparativo de R
     efficiency: data.uniqueLocations > 0 ? Math.round(data.activities / data.uniqueLocations * 100) / 100 : 0
   }));
 
-  // Preparar datos para radar chart
-  const radarData = Object.entries(comparisons.byContractor).map(([contractor, data]) => ({
-    contractor,
-    'Actividades': Math.min(data.activities / 10, 10), // Normalizar a escala 0-10
-    'Beneficiarios': Math.min(data.avgBeneficiaries / 50, 10), // Normalizar
-    'Cobertura': Math.min(data.uniqueLocations / 5, 10), // Normalizar
-    'Eficiencia': Math.min(data.activities / data.uniqueLocations / 2, 10) // Normalizar
-  }));
+  // Radar: una fila por dimensión y una columna por contratista. Cada dimensión se normaliza a escala 0-10
+  // respecto al mayor valor entre contratistas, para que sean comparables entre sí.
+  const contractorNames = Object.keys(comparisons.byContractor);
+  const radarMetrics = [
+    { dimension: 'Actividades', getValue: (data) => data.activities },
+    { dimension: 'Beneficiarios por jornada', getValue: (data) => data.avgBeneficiaries },
+    { dimension: 'Cobertura (ubicaciones)', getValue: (data) => data.uniqueLocations },
+    { dimension: 'Actividades por ubicación', getValue: (data) => (data.uniqueLocations > 0 ? data.activities / data.uniqueLocations : 0) }
+  ];
+  const radarData = radarMetrics.map(({ dimension, getValue }) => {
+    const maxValue = Math.max(0, ...contractorNames.map(name => getValue(comparisons.byContractor[name])));
+    const row = { dimension };
+    contractorNames.forEach(name => {
+      row[name] = maxValue > 0 ? Math.round((getValue(comparisons.byContractor[name]) / maxValue) * 100) / 10 : 0;
+    });
+    return row;
+  });
 
   const getPerformanceLevel = (value, type) => {
     if (type === 'efficiency') {
@@ -48,12 +58,6 @@ const PerformanceComparison = ({ activities, title = "Análisis Comparativo de R
     if (value >= 25) return { level: 'Medio', color: 'info' };
     if (value >= 15) return { level: 'Regular', color: 'warning' };
     return { level: 'Bajo', color: 'error' };
-  };
-
-  const CONTRACTOR_COLORS = {
-    'CUC': '#2196F3',
-    'FUNDACARIBE': '#4CAF50',
-    'Desconocido': '#9E9E9E'
   };
 
   if (chartData.length === 0) {
@@ -79,7 +83,7 @@ const PerformanceComparison = ({ activities, title = "Análisis Comparativo de R
         {/* Gráfico de barras comparativo */}
         <Box sx={{ mb: 4 }}>
           <Typography variant="h6" gutterBottom>
-            Actividades y Beneficiarios por Contratista-Modalidad
+            Actividades y Beneficiarios por Jornada, por Contratista-Modalidad
           </Typography>
           <ResponsiveContainer width="100%" height={300}>
             <BarChart data={chartData} margin={{ bottom: 60 }}>
@@ -117,7 +121,7 @@ const PerformanceComparison = ({ activities, title = "Análisis Comparativo de R
               <Bar 
                 yAxisId="right"
                 dataKey="avgBeneficiaries" 
-                name="Beneficiarios Promedio" 
+                name="Beneficiarios por jornada" 
                 fill="#82ca9d"
               />
             </BarChart>
@@ -125,7 +129,7 @@ const PerformanceComparison = ({ activities, title = "Análisis Comparativo de R
         </Box>
 
         {/* Radar chart de rendimiento */}
-        {radarData.length > 1 && (
+        {contractorNames.length > 1 && (
           <Box sx={{ mb: 4 }}>
             <Typography variant="h6" gutterBottom>
               Análisis Multidimensional por Contratista
@@ -133,15 +137,15 @@ const PerformanceComparison = ({ activities, title = "Análisis Comparativo de R
             <ResponsiveContainer width="100%" height={300}>
               <RadarChart data={radarData}>
                 <PolarGrid />
-                <PolarAngleAxis dataKey="contractor" />
+                <PolarAngleAxis dataKey="dimension" />
                 <PolarRadiusAxis domain={[0, 10]} />
-                {Object.keys(CONTRACTOR_COLORS).map((contractor, index) => (
+                {contractorNames.map((contractor) => (
                   <Radar
                     key={contractor}
                     name={contractor}
                     dataKey={contractor}
-                    stroke={CONTRACTOR_COLORS[contractor]}
-                    fill={CONTRACTOR_COLORS[contractor]}
+                    stroke={getContractorColor(contractor)}
+                    fill={getContractorColor(contractor)}
                     fillOpacity={0.1}
                   />
                 ))}
@@ -166,7 +170,7 @@ const PerformanceComparison = ({ activities, title = "Análisis Comparativo de R
                   <TableCell align="right"><strong>Actividades</strong></TableCell>
                   <TableCell align="right"><strong>Ubicaciones</strong></TableCell>
                   <TableCell align="right"><strong>Total Benef.</strong></TableCell>
-                  <TableCell align="right"><strong>Promedio Benef.</strong></TableCell>
+                  <TableCell align="right"><strong>Benef. por jornada</strong></TableCell>
                   <TableCell align="right"><strong>Eficiencia</strong></TableCell>
                   <TableCell align="center"><strong>Nivel</strong></TableCell>
                 </TableRow>

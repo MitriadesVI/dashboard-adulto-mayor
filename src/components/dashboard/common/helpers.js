@@ -1,23 +1,22 @@
 // src/components/dashboard/common/helpers.js
 
-import { LinearProgress } from '@mui/material';
+import { getContractor } from '../../../config/contractors';
+import { parseActivityDate, toDateKey, todayKey } from '../../../utils/dates';
+
+const TYPE_LABELS = {
+  nutrition: { education: 'Educación Nutricional', health: 'Salud Nutricional', generic: 'Nutrición' },
+  physical: { education: 'Educación en Salud Física', health: 'Salud Física', generic: 'Actividad Física' },
+  psychosocial: { education: 'Educación Psicosocial', health: 'Salud Psicosocial', generic: 'Actividad Psicosocial' }
+};
 
 // Función para obtener etiqueta del tipo de actividad
 export const getActivityTypeLabel = (type, contractor) => {
   if (!type) return 'Desconocido';
-  
-  if (type === 'nutrition') {
-    if (contractor === 'CUC') return 'Educación Nutricional';
-    if (contractor === 'FUNDACARIBE') return 'Salud Nutricional';
-    return 'Nutrición'; // Default para otros contratistas
-  } else if (type === 'physical') {
-    if (contractor === 'CUC') return 'Educación en Salud Física';
-    if (contractor === 'FUNDACARIBE') return 'Salud Física';
-    return 'Actividad Física'; // Default
-  } else if (type === 'psychosocial') {
-    if (contractor === 'CUC') return 'Educación Psicosocial';
-    if (contractor === 'FUNDACARIBE') return 'Salud Psicosocial';
-    return 'Actividad Psicosocial'; // Default
+
+  const labels = TYPE_LABELS[type];
+  if (labels) {
+    const style = getContractor(contractor)?.labelStyle;
+    return labels[style] || labels.generic;
   }
   return type.charAt(0).toUpperCase() + type.slice(1);
 };
@@ -28,7 +27,7 @@ export const getActivitySubtypeLabel = (type, subtype, contractor) => {
   
   const subtypeMap = {
     nutrition: {
-      workshop: contractor === 'CUC' ? 'Taller educativo del cuidado nutricional' : 'Jornada de promoción de la salud nutricional',
+      workshop: getContractor(contractor)?.labelStyle === 'education' ? 'Taller educativo del cuidado nutricional' : 'Jornada de promoción de la salud nutricional',
       ration: 'Raciones alimenticias/meriendas', // Para compatibilidad con actividades antiguas
       centerRation: 'Raciones alimenticias (Centros)',
       parkSnack: 'Meriendas (Parques/Espacios)'
@@ -57,21 +56,57 @@ export const getActivitySubtypeLabel = (type, subtype, contractor) => {
   return subtype.charAt(0).toUpperCase() + subtype.slice(1);
 };
 
-// Función mejorada para verificar el tipo de ubicación
+// Función mejorada para verificar el tipo de ubicación ('center' | 'park' | 'unknown')
 export const getLocationType = (location) => {
   if (!location || !location.type) return 'unknown';
   
   // Normalizar el tipo de ubicación
-  const type = location.type.toLowerCase();
+  const type = String(location.type).toLowerCase().trim();
   
   // Verificar diferentes variantes de nombres de ubicación
-  if (type === 'center' || type.includes('centro') || type.includes('fijo')) {
+  if (type === 'center' || type === 'cdv' || type.includes('centro') || type.includes('fijo')) {
     return 'center';
   } else if (type === 'park' || type.includes('parque') || type.includes('espacio')) {
     return 'park';
   }
   
   return 'unknown';
+};
+
+// Coincide con el filtro de tipo de actividad del Dashboard ('nutrition' | 'physical' | 'psychosocial').
+// Las entregas de alimentos (sin actividad educativa) cuentan como 'nutrition'.
+export const matchesActivityType = (activity, type) => {
+  if (!type || type === 'all') return true;
+  if (!activity) return false;
+  if (activity.educationalActivity?.included && activity.educationalActivity.type === type) return true;
+  return type === 'nutrition' && !!activity.nutritionDelivery?.included;
+};
+
+// Contratista común a todas las actividades (o undefined si hay varios), para elegir etiquetas
+export const getCommonContractor = (activities) => {
+  const contractors = new Set((activities || []).map(a => a?.contractor).filter(Boolean));
+  return contractors.size === 1 ? [...contractors][0] : undefined;
+};
+
+// Semana ISO 8601 (lunes a domingo). El año ISO puede diferir del año calendario a fin/inicio de año.
+export const getIsoWeek = (date) => {
+  const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
+  const dayNum = d.getUTCDay() || 7;
+  d.setUTCDate(d.getUTCDate() + 4 - dayNum);
+  const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
+  return { year: d.getUTCFullYear(), week: Math.ceil((((d - yearStart) / 86400000) + 1) / 7) };
+};
+
+// Clave ordenable de semana ISO, ej. '2026-W05'
+export const getIsoWeekKey = (date) => {
+  const { year, week } = getIsoWeek(date);
+  return `${year}-W${String(week).padStart(2, '0')}`;
+};
+
+// 'YYYY-MM' -> 'octubre de 2026' (en hora local; new Date('YYYY-MM-01') sería UTC)
+export const formatMonthLabel = (monthKey) => {
+  const date = parseActivityDate(`${monthKey}-01`);
+  return date ? date.toLocaleDateString('es-CO', { month: 'long', year: 'numeric' }) : String(monthKey || '');
 };
 
 // Función para contar raciones y meriendas por tipo de ubicación
@@ -238,19 +273,12 @@ export const getNutritionStatsByLocation = (activities) => {
   return Object.values(locationStats).sort((a, b) => b.total - a.total);
 };
 
-// Formatear fechas
-export const formatDate = (dateString) => {
-  if (!dateString) return 'Fecha desconocida';
-  try {
-    const date = new Date(dateString);
-    if (isNaN(date.getTime())) { // Validar si es una fecha válida
-      return 'Fecha inválida';
-    }
-    return date.toLocaleDateString('es-CO', { day: '2-digit', month: '2-digit', year: 'numeric' });
-  } catch (e) {
-    console.warn("Error al formatear fecha:", dateString, e);
-    return 'Fecha inválida';
-  }
+// Formatear fechas (acepta 'YYYY-MM-DD', ISO legado, Date o Timestamp; siempre en hora local)
+export const formatDate = (dateValue) => {
+  if (!dateValue) return 'Fecha desconocida';
+  const date = parseActivityDate(dateValue);
+  if (!date) return 'Fecha inválida';
+  return date.toLocaleDateString('es-CO', { day: '2-digit', month: '2-digit', year: 'numeric' });
 };
 
 // Formatear jornada
@@ -274,7 +302,7 @@ export const formatLocationType = (type) => {
   
   const normalizedType = type.toLowerCase();
   
-  if (normalizedType === 'center' || normalizedType.includes('centro')) {
+  if (normalizedType === 'center' || normalizedType === 'cdv' || normalizedType.includes('centro')) {
     return 'Centro de Vida Fijo';
   } else if (normalizedType === 'park' || normalizedType.includes('parque') || normalizedType.includes('espacio')) {
     return 'Parque/Espacio Comunitario';
@@ -303,6 +331,12 @@ export const NUTRITION_COLORS = {
   ration: '#FFB74D',
   centerRation: '#FF8A65',
   parkSnack: '#FFD54F'
+};
+
+// Escapa un valor para CSV (comillas si contiene coma, comillas o saltos de línea)
+const csvCell = (value) => {
+  const text = String(value ?? '');
+  return /[",\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
 };
 
 // Función para exportar datos a CSV
@@ -338,25 +372,26 @@ export const exportToCSV = (activities) => {
         activity.location?.type ? formatLocationType(activity.location.type) : '',
         formatSchedule(activity.schedule),
         activity.totalBeneficiaries || 0,
-        activity.educationalActivity?.description ? `"${activity.educationalActivity.description.replace(/"/g, '""')}"` : ''
+        activity.educationalActivity?.description || ''
       ];
       
-      csv += row.join(',') + '\n';
+      csv += row.map(csvCell).join(',') + '\n';
     } catch (e) {
       console.warn("Error exportando actividad:", e);
     }
   });
   
-  // Crear y descargar el archivo
-  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+  // Crear y descargar el archivo (BOM para que Excel lea bien las tildes)
+  const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
   const url = URL.createObjectURL(blob);
   const link = document.createElement('a');
   link.setAttribute('href', url);
-  link.setAttribute('download', `actividades_${new Date().toISOString().slice(0,10)}.csv`);
+  link.setAttribute('download', `actividades_${todayKey()}.csv`);
   link.style.visibility = 'hidden';
   document.body.appendChild(link);
   link.click();
   document.body.removeChild(link);
+  URL.revokeObjectURL(url);
 };
 
 // Funciones para Dashboard
@@ -412,51 +447,43 @@ export const getTopLocations = (activities, limit = 5) => {
     .slice(0, limit);
 };
 
-// Calcular promedios de beneficiarios por ubicación
+// Calcular promedios de beneficiarios por ubicación (asistencia por jornada de servicio, sin doble conteo)
 export const getAverageBeneficiariesByLocation = (activities, topCount = 3) => {
   if (!activities || !Array.isArray(activities) || activities.length === 0) {
     return [];
   }
   
-  // Objeto para almacenar datos por ubicación
+  // Objeto para almacenar las actividades (con asistentes) de cada ubicación
   const locationData = {};
   
-  // Agrupar actividades por ubicación
   activities.forEach(activity => {
     if (!activity || !activity.location || !activity.location.name || !activity.totalBeneficiaries) {
       return;
     }
     
     const locationName = activity.location.name;
-    const locationType = getLocationType(activity.location);
     
-    // Inicializar contador si no existe
     if (!locationData[locationName]) {
       locationData[locationName] = {
         name: locationName,
-        type: locationType,
-        totalBeneficiaries: 0,
-        activityCount: 0
+        type: getLocationType(activity.location),
+        activities: []
       };
     }
     
-    // Incrementar contadores
-    locationData[locationName].totalBeneficiaries += Number(activity.totalBeneficiaries);
-    locationData[locationName].activityCount += 1;
+    locationData[locationName].activities.push(activity);
   });
   
-  // Calcular promedio y separar por tipo
+  // Calcular promedio y separar por tipo (las ubicaciones de tipo desconocido no se asignan a ninguna modalidad)
   const centerLocations = [];
   const parkLocations = [];
   
   Object.values(locationData).forEach(location => {
-    // Calcular promedio
-    location.average = Math.round(location.totalBeneficiaries / location.activityCount);
+    location.average = calculateAverageAttendance(location.activities);
     
-    // Agregar a la lista correspondiente
     if (location.type === 'center') {
       centerLocations.push(location);
-    } else {
+    } else if (location.type === 'park') {
       parkLocations.push(location);
     }
   });
@@ -512,7 +539,7 @@ export const getAverageBeneficiariesByActivityType = (activities) => {
   });
   
   return Object.keys(typeCounts).map(type => ({
-    type: getActivityTypeLabel(type, educationalActivities[0]?.contractor),
+    type: getActivityTypeLabel(type, getCommonContractor(educationalActivities)),
     average: typeCounts[type] > 0 ? Math.round(typeBeneficiaries[type] / typeCounts[type]) : 0,
     total: typeBeneficiaries[type],
     count: typeCounts[type]
@@ -524,7 +551,11 @@ export const getAverageBeneficiariesByActivityType = (activities) => {
 // Función para obtener métricas de eficiencia por modalidad
 export const getModalityEfficiencyMetrics = (activities) => {
   if (!activities || !Array.isArray(activities) || activities.length === 0) {
-    return { centers: {}, parks: {}, summary: {} };
+    return {
+      centers: calculateModalityMetrics([], 'center'),
+      parks: calculateModalityMetrics([], 'park'),
+      summary: { totalEducational: 0, centerShare: 0, parkShare: 0 }
+    };
   }
 
   // Filtrar solo actividades educativas reales
@@ -558,7 +589,6 @@ export const getModalityEfficiencyMetrics = (activities) => {
   };
 };
 
-// ========== FUNCIÓN CORREGIDA: calculateModalityMetrics ==========
 const calculateModalityMetrics = (activities, modalityType) => {
   if (!activities.length) {
     return {
@@ -574,20 +604,13 @@ const calculateModalityMetrics = (activities, modalityType) => {
     };
   }
 
-  // ========== CORRECCIÓN: USAR calculateUniqueAttendance ==========
+  // Asistencia sin doble conteo (máximo por ubicación + fecha + jornada)
   const totalBeneficiaries = calculateUniqueAttendance(activities);
   
   const uniqueLocations = [...new Set(activities.map(a => a.location?.name).filter(Boolean))];
   
   // Calcular días únicos de operación
-  const uniqueDates = [...new Set(activities.map(a => {
-    if (!a.date) return null;
-    try {
-      return new Date(a.date).toDateString();
-    } catch {
-      return null;
-    }
-  }).filter(Boolean))];
+  const uniqueDates = [...new Set(activities.map(a => toDateKey(a.date)).filter(Boolean))];
 
   // Distribución de jornadas (importante para centros)
   const scheduleDistribution = {};
@@ -608,8 +631,8 @@ const calculateModalityMetrics = (activities, modalityType) => {
 
   return {
     totalActivities: activities.length,
-    totalBeneficiaries,  // ← AHORA CORREGIDO
-    averageBeneficiaries: activities.length > 0 ? Math.round(totalBeneficiaries / activities.length) : 0,
+    totalBeneficiaries,
+    averageBeneficiaries: calculateAverageAttendance(activities),
     uniqueLocations: uniqueLocations.length,
     activitiesPerLocation: uniqueLocations.length > 0 ? Math.round(activities.length / uniqueLocations.length * 100) / 100 : 0,
     operatingDays: uniqueDates.length,
@@ -623,7 +646,7 @@ const calculateModalityMetrics = (activities, modalityType) => {
 // Función para análisis temporal por modalidad
 export const getTemporalAnalysisByModality = (activities) => {
   if (!activities || !Array.isArray(activities) || activities.length === 0) {
-    return { byDay: {}, byWeek: {}, trends: {} };
+    return { byDay: { center: {}, park: {} }, byWeek: {} };
   }
 
   const educationalActivities = activities.filter(a => 
@@ -635,29 +658,29 @@ export const getTemporalAnalysisByModality = (activities) => {
   const byWeek = {};
 
   educationalActivities.forEach(activity => {
-    try {
-      const date = new Date(activity.date);
-      const dayOfWeek = dayNames[date.getDay()];
-      const weekKey = `${date.getFullYear()}-W${Math.ceil(date.getDate()/7)}`;
-      const locationType = getLocationType(activity.location);
-      const modalityType = locationType === 'center' ? 'center' : 'park';
+    const date = parseActivityDate(activity.date);
+    if (!date) return; // Ignorar fechas inválidas
 
-      // Por día de la semana
-      if (!byDay[modalityType][dayOfWeek]) {
-        byDay[modalityType][dayOfWeek] = { count: 0, beneficiaries: 0 };
-      }
-      byDay[modalityType][dayOfWeek].count++;
-      byDay[modalityType][dayOfWeek].beneficiaries += Number(activity.totalBeneficiaries) || 0;
+    // Solo centros y parques/espacios; las ubicaciones de tipo desconocido no se asignan a ninguna modalidad
+    const modalityType = getLocationType(activity.location);
+    if (modalityType !== 'center' && modalityType !== 'park') return;
 
-      // Por semana
-      if (!byWeek[weekKey]) {
-        byWeek[weekKey] = { center: 0, park: 0, total: 0 };
-      }
-      byWeek[weekKey][modalityType]++;
-      byWeek[weekKey].total++;
-    } catch (e) {
-      // Ignorar fechas inválidas
+    const dayOfWeek = dayNames[date.getDay()];
+    const weekKey = getIsoWeekKey(date);
+
+    // Por día de la semana
+    if (!byDay[modalityType][dayOfWeek]) {
+      byDay[modalityType][dayOfWeek] = { count: 0, beneficiaries: 0 };
     }
+    byDay[modalityType][dayOfWeek].count++;
+    byDay[modalityType][dayOfWeek].beneficiaries += Number(activity.totalBeneficiaries) || 0;
+
+    // Por semana (ISO)
+    if (!byWeek[weekKey]) {
+      byWeek[weekKey] = { center: 0, park: 0, total: 0 };
+    }
+    byWeek[weekKey][modalityType]++;
+    byWeek[weekKey].total++;
   });
 
   return { byDay, byWeek };
@@ -674,62 +697,37 @@ export const getPerformanceComparisons = (activities) => {
   );
 
   const comparisons = { byContractor: {}, byModality: {}, combined: {} };
+  const MODALITY_LABELS = { center: 'Centros Fijos', park: 'Parques/Espacios', unknown: 'Sin clasificar' };
+
+  const addToGroup = (group, key, activity, extra = {}) => {
+    if (!group[key]) {
+      group[key] = { ...extra, activityList: [], locations: new Set() };
+    }
+    group[key].activityList.push(activity);
+    if (activity.location?.name) group[key].locations.add(activity.location.name);
+  };
 
   // Agrupar por contratista y modalidad
   educationalActivities.forEach(activity => {
     const contractor = activity.contractor || 'Desconocido';
-    const locationType = getLocationType(activity.location);
-    const modalityType = locationType === 'center' ? 'Centros Fijos' : 'Parques/Espacios';
+    const modalityType = MODALITY_LABELS[getLocationType(activity.location)];
     const key = `${contractor}-${modalityType}`;
 
-    // Por contratista
-    if (!comparisons.byContractor[contractor]) {
-      comparisons.byContractor[contractor] = {
-        activities: 0, beneficiaries: 0, locations: new Set(), avgBeneficiaries: 0
-      };
-    }
-    comparisons.byContractor[contractor].activities++;
-    comparisons.byContractor[contractor].beneficiaries += Number(activity.totalBeneficiaries) || 0;
-    comparisons.byContractor[contractor].locations.add(activity.location?.name);
-
-    // Por modalidad
-    if (!comparisons.byModality[modalityType]) {
-      comparisons.byModality[modalityType] = {
-        activities: 0, beneficiaries: 0, locations: new Set(), avgBeneficiaries: 0
-      };
-    }
-    comparisons.byModality[modalityType].activities++;
-    comparisons.byModality[modalityType].beneficiaries += Number(activity.totalBeneficiaries) || 0;
-    comparisons.byModality[modalityType].locations.add(activity.location?.name);
-
-    // Combinado
-    if (!comparisons.combined[key]) {
-      comparisons.combined[key] = {
-        contractor, modalityType, activities: 0, beneficiaries: 0, locations: new Set()
-      };
-    }
-    comparisons.combined[key].activities++;
-    comparisons.combined[key].beneficiaries += Number(activity.totalBeneficiaries) || 0;
-    comparisons.combined[key].locations.add(activity.location?.name);
+    addToGroup(comparisons.byContractor, contractor, activity);
+    addToGroup(comparisons.byModality, modalityType, activity);
+    addToGroup(comparisons.combined, key, activity, { contractor, modalityType });
   });
 
-  // Calcular promedios
-  Object.values(comparisons.byContractor).forEach(data => {
-    data.avgBeneficiaries = data.activities > 0 ? Math.round(data.beneficiaries / data.activities) : 0;
-    data.uniqueLocations = data.locations.size;
-    delete data.locations;
-  });
-
-  Object.values(comparisons.byModality).forEach(data => {
-    data.avgBeneficiaries = data.activities > 0 ? Math.round(data.beneficiaries / data.activities) : 0;
-    data.uniqueLocations = data.locations.size;
-    delete data.locations;
-  });
-
-  Object.values(comparisons.combined).forEach(data => {
-    data.avgBeneficiaries = data.activities > 0 ? Math.round(data.beneficiaries / data.activities) : 0;
-    data.uniqueLocations = data.locations.size;
-    delete data.locations;
+  // Calcular totales (asistencia sin doble conteo) y promedios por jornada de servicio
+  [comparisons.byContractor, comparisons.byModality, comparisons.combined].forEach(group => {
+    Object.values(group).forEach(data => {
+      data.activities = data.activityList.length;
+      data.beneficiaries = calculateUniqueAttendance(data.activityList);
+      data.avgBeneficiaries = calculateAverageAttendance(data.activityList);
+      data.uniqueLocations = data.locations.size;
+      delete data.activityList;
+      delete data.locations;
+    });
   });
 
   return comparisons;
@@ -759,7 +757,8 @@ export const generateComparisonData = (activities, field = 'beneficiaries') => {
   centerActivities.forEach(activity => {
     if (!activity || !activity.date) return;
     
-    const dateKey = new Date(activity.date).toISOString().split('T')[0];
+    const dateKey = toDateKey(activity.date);
+    if (!dateKey) return;
     centerByDate[dateKey] = (centerByDate[dateKey] || 0) + 
       (field === 'count' ? 1 : (Number(activity.totalBeneficiaries) || 0));
   });
@@ -767,7 +766,8 @@ export const generateComparisonData = (activities, field = 'beneficiaries') => {
   parkActivities.forEach(activity => {
     if (!activity || !activity.date) return;
     
-    const dateKey = new Date(activity.date).toISOString().split('T')[0];
+    const dateKey = toDateKey(activity.date);
+    if (!dateKey) return;
     parkByDate[dateKey] = (parkByDate[dateKey] || 0) + 
       (field === 'count' ? 1 : (Number(activity.totalBeneficiaries) || 0));
   });
@@ -775,11 +775,11 @@ export const generateComparisonData = (activities, field = 'beneficiaries') => {
   // Convertir a arrays para gráficos
   const centerData = Object.entries(centerByDate)
     .map(([date, value]) => ({ date, value }))
-    .sort((a, b) => new Date(a.date) - new Date(b.date));
+    .sort((a, b) => a.date.localeCompare(b.date));
     
   const parkData = Object.entries(parkByDate)
     .map(([date, value]) => ({ date, value }))
-    .sort((a, b) => new Date(a.date) - new Date(b.date));
+    .sort((a, b) => a.date.localeCompare(b.date));
     
   return { centerData, parkData };
 };
@@ -787,48 +787,49 @@ export const generateComparisonData = (activities, field = 'beneficiaries') => {
 // ========== FUNCIONES NUEVAS PARA CORREGIR DOBLE CONTEO ==========
 
 /**
- * FUNCIÓN CRÍTICA: Calcular asistencia única evitando duplicaciones
- * Agrupa por ubicación + fecha + jornada y toma el MÁXIMO de beneficiarios
+ * Agrupa las actividades por ubicación + fecha + jornada (SIN usuario) y toma el MÁXIMO de
+ * beneficiarios de cada grupo. Devuelve Map(clave de grupo -> máximo de beneficiarios).
  * Ejemplo: CDV La Paz, 26/mayo, J1 con 45 educativo + 45 ración = Math.max(45,45) = 45
  */
-export const calculateUniqueAttendance = (activities) => {
-  if (!activities || !Array.isArray(activities) || activities.length === 0) {
-    return 0;
-  }
+export const getAttendanceGroups = (activities) => {
+  const groups = new Map();
+  if (!activities || !Array.isArray(activities)) return groups;
 
-  // PASO 1: Agrupar por ubicación + fecha + jornada (SIN usuario)
-  const dayGroupMap = new Map();
-  
   activities.forEach(activity => {
-    if (!activity || !activity.location || !activity.date) return;
-    
-    const dateKey = new Date(activity.date).toISOString().split('T')[0];
+    if (!activity || !activity.location) return;
+
+    const dateKey = activity.dateKey || toDateKey(activity.date);
+    if (!dateKey) return; // Sin fecha válida no se puede agrupar
+
     const schedule = activity.schedule || 'general';
     const locationName = activity.location.name || 'Desconocida';
-    
-    // Clave única: ubicación + fecha + jornada (SIN usuario - esta es la clave)
     const groupKey = `${locationName}-${dateKey}-${schedule}`;
-    
-    if (!dayGroupMap.has(groupKey)) {
-      dayGroupMap.set(groupKey, {
-        maxBeneficiaries: 0
-      });
-    }
-    
-    const group = dayGroupMap.get(groupKey);
     const beneficiaries = Number(activity.totalBeneficiaries) || 0;
-    
-    // PASO 2: Tomar el MÁXIMO por jornada (lógica correcta confirmada)
-    group.maxBeneficiaries = Math.max(group.maxBeneficiaries, beneficiaries);
+
+    groups.set(groupKey, Math.max(groups.get(groupKey) || 0, beneficiaries));
   });
-  
-  // PASO 3: Sumar los máximos de cada jornada
-  const totalUniqueAttendance = Array.from(dayGroupMap.values())
-    .reduce((sum, group) => sum + group.maxBeneficiaries, 0);
-  
-  console.log(`Beneficiarios únicos calculados: ${totalUniqueAttendance} (de ${activities.length} registros)`);
-  
-  return totalUniqueAttendance;
+
+  return groups;
+};
+
+/**
+ * FUNCIÓN CRÍTICA: Calcular asistencia única evitando duplicaciones
+ * Suma el máximo de beneficiarios de cada grupo ubicación + fecha + jornada.
+ */
+export const calculateUniqueAttendance = (activities) => {
+  let total = 0;
+  getAttendanceGroups(activities).forEach(max => { total += max; });
+  return total;
+};
+
+/**
+ * Promedio de asistencia por jornada de servicio: asistencia única / número de grupos
+ * ubicación + fecha + jornada (no / número de registros, que diluiría el promedio).
+ */
+export const calculateAverageAttendance = (activities) => {
+  const groups = getAttendanceGroups(activities);
+  if (groups.size === 0) return 0;
+  return Math.round(calculateUniqueAttendance(activities) / groups.size);
 };
 
 /**
