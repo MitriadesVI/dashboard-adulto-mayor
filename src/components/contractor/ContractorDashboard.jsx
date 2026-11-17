@@ -7,7 +7,9 @@ import {
   FormControl, InputLabel, Select, MenuItem,
   TextField, Alert, LinearProgress, Card, CardContent
 } from '@mui/material';
+import { useNavigate } from 'react-router-dom';
 import RefreshIcon from '@mui/icons-material/Refresh';
+import DescriptionIcon from '@mui/icons-material/Description';
 import FileDownloadIcon from '@mui/icons-material/FileDownload';
 
 import activitiesService from '../../services/activitiesService';
@@ -41,6 +43,7 @@ const KpiCard = ({ label, value, caption, color = 'text.primary', sx }) => (
 );
 
 const ContractorDashboard = ({ user }) => {
+  const navigate = useNavigate();
   const contractor = user?.contractor;
   const currentYear = new Date().getFullYear();
 
@@ -210,14 +213,23 @@ const ContractorDashboard = ({ user }) => {
               </Typography>
             )}
           </Box>
-          <Button
-            variant="outlined"
-            startIcon={<RefreshIcon />}
-            onClick={() => loadData(true)}
-            disabled={refreshing}
-          >
-            {refreshing ? 'Actualizando...' : 'Actualizar'}
-          </Button>
+          <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
+            <Button
+              variant="contained"
+              startIcon={<DescriptionIcon />}
+              onClick={() => navigate('/informe')}
+            >
+              Informe mensual
+            </Button>
+            <Button
+              variant="outlined"
+              startIcon={<RefreshIcon />}
+              onClick={() => loadData(true)}
+              disabled={refreshing}
+            >
+              {refreshing ? 'Actualizando...' : 'Actualizar'}
+            </Button>
+          </Box>
         </Box>
 
         {refreshing && <LinearProgress sx={{ mb: 2 }} />}

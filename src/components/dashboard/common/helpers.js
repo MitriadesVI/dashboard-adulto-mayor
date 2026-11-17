@@ -8,7 +8,8 @@ import {
   getActivityAttendees,
   getPerformer,
   groupAttendance,
-  summarizeAttendance
+  summarizeAttendance,
+  summarizeRations
 } from '../../../utils/attendance';
 
 const TYPE_LABELS = {
@@ -123,20 +124,12 @@ export const getNutritionCountByLocationType = (activities) => {
     return { centers: 0, parks: 0, total: 0 };
   }
 
-  let centerRations = 0;
-  let parkSnacks = 0;
-  activities.forEach(a => {
-    const rations = getActivityRations(a);
-    if (!rations) return;
-    const locationType = getLocationType(a.location);
-    if (locationType === 'center') centerRations += rations;
-    else if (locationType === 'park') parkSnacks += rations;
-  });
-
+  // Máximo por sede + fecha + jornada (ver src/utils/attendance.js)
+  const rations = summarizeRations(activities);
   return {
-    centers: centerRations,
-    parks: parkSnacks,
-    total: centerRations + parkSnacks
+    centers: rations.center,
+    parks: rations.park,
+    total: rations.center + rations.park
   };
 };
 
@@ -203,15 +196,11 @@ export const getNutritionStats = (activities) => {
     a && a.nutritionDelivery && a.nutritionDelivery.included === true
   );
   
-  // Contar raciones (centros) - estas son beneficios, no actividades
-  const centerRations = nutritionActivities
-    .filter(a => getLocationType(a.location) === 'center')
-    .reduce((sum, a) => sum + getActivityRations(a), 0);
-    
-  // Contar meriendas (parques) - estas son beneficios, no actividades
-  const parkSnacks = nutritionActivities
-    .filter(a => getLocationType(a.location) === 'park')
-    .reduce((sum, a) => sum + getActivityRations(a), 0);
+  // Raciones (centros) y meriendas (parques): beneficios, no actividades.
+  // Máximo por sede + fecha + jornada para no contar dos veces la misma entrega.
+  const rationTotals = summarizeRations(nutritionActivities);
+  const centerRations = rationTotals.center;
+  const parkSnacks = rationTotals.park;
     
   // Total combinado de beneficiarios
   const totalNutrition = centerRations + parkSnacks;
@@ -266,6 +255,15 @@ export const getNutritionStatsByLocation = (activities) => {
     }
   });
   
+  // Corregir con la regla sin doble conteo (máximo por sede + fecha + jornada)
+  Object.values(locationStats).forEach(stat => {
+    const totals = summarizeRations(activities.filter(a =>
+      a?.location?.name === stat.name && a.nutritionDelivery?.included));
+    stat.centerRations = stat.type === 'center' ? totals.total : 0;
+    stat.parkSnacks = stat.type === 'park' ? totals.total : 0;
+    stat.total = stat.centerRations + stat.parkSnacks;
+  });
+
   // Convertir a array y ordenar por total
   return Object.values(locationStats).sort((a, b) => b.total - a.total);
 };

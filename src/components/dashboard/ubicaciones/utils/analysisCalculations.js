@@ -1,5 +1,5 @@
 import { getLocationType, getIsoWeek, getIsoWeekKey, formatDate } from '../../common/helpers';
-import { getActivityPeople, getActivityRations, normalizeJornada } from '../../../../utils/attendance';
+import { getActivityPeople, getActivityRations, normalizeJornada, summarizeRations } from '../../../../utils/attendance';
 import { parseActivityDate, toDateKey, todayKey, daysBetween } from '../../../../utils/dates';
 
 export const performDetailedAnalysis = (locationActivities, locationInfo) => {
@@ -44,7 +44,7 @@ export const performDetailedAnalysis = (locationActivities, locationInfo) => {
     
     if (activity.nutritionDelivery && activity.nutritionDelivery.included) {
       group.hasNutrition = true;
-      group.nutritionRations += getActivityRations(activity);
+      group.nutritionRations = Math.max(group.nutritionRations, getActivityRations(activity));
       group.components.add('nutrition');
     }
   });
@@ -60,9 +60,7 @@ export const performDetailedAnalysis = (locationActivities, locationInfo) => {
     a.nutritionDelivery && a.nutritionDelivery.included
   ).length;
   
-  const totalRations = locationActivities
-    .filter(a => a.nutritionDelivery && a.nutritionDelivery.included)
-    .reduce((sum, a) => sum + getActivityRations(a), 0);
+  const totalRations = summarizeRations(locationActivities).total;
 
   // Promedio general de asistencia (máximo por día+jornada)
   const totalMaxBeneficiaries = dayGroups.reduce((sum, group) => sum + group.maxBeneficiaries, 0);
@@ -124,13 +122,16 @@ export const analyzeComponents = (activities) => {
     }
     
     if (activity.nutritionDelivery && activity.nutritionDelivery.included) {
-      components.nutrition.deliveries++;
-      components.nutrition.rations += getActivityRations(activity);
-      
+
       const deliveryType = activity.nutritionDelivery.type || 'general';
       components.nutrition.strategies[deliveryType] = (components.nutrition.strategies[deliveryType] || 0) + 1;
     }
   });
+
+  // Entregas y raciones sin doble conteo (máximo por sede + fecha + jornada)
+  const rationTotals = summarizeRations(activities);
+  components.nutrition.deliveries = rationTotals.deliveries;
+  components.nutrition.rations = rationTotals.total;
 
   return components;
 };

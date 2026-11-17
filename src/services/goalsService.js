@@ -12,7 +12,7 @@ import {
 } from 'firebase/firestore';
 import { db } from '../firebase/config';
 import { getActivityYear } from '../utils/dates';
-import { getActivityRations } from '../utils/attendance';
+import { summarizeRations } from '../utils/attendance';
 
 const goalsService = {
   // Establecer metas para un contratista y año
@@ -186,22 +186,13 @@ const goalsService = {
           }
         }
         
-        // CONTAR ENTREGAS NUTRICIONALES (por beneficiarios)
-        if (activity.nutritionDelivery && activity.nutritionDelivery.included) {
-          // Raciones/meriendas entregadas (si no se registraron aparte, igual a los beneficiarios)
-          const beneficiaries = getActivityRations(activity);
-          
-          // Determinar tipo de ubicación
-          const locationType = activity.location?.type?.toLowerCase() || '';
-          
-          if (locationType.includes('center') || locationType.includes('centro')) {
-            counts.nutrition.centerRations += beneficiaries;
-          } else if (locationType.includes('park') || locationType.includes('parque')) {
-            counts.nutrition.parkSnacks += beneficiaries;
-          }
-        }
       });
       
+      // Raciones (CDV) y meriendas (parques) entregadas, sin doble conteo por jornada
+      const rationTotals = summarizeRations(yearActivities);
+      counts.nutrition.centerRations = rationTotals.center;
+      counts.nutrition.parkSnacks = rationTotals.park;
+
       console.log('Conteos calculados:', counts);
       
       // Calcular porcentajes de avance

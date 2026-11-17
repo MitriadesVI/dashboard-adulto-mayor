@@ -15,6 +15,8 @@ import ApprovalPanel from './components/approval/ApprovalPanel';
 import AdminPanel from './components/pages/AdminPanel';
 import DiagnosticPage from './components/DiagnosticPage';
 import ProfilePanel from './components/profile/ProfilePanel';
+import { HOME_BY_ROLE } from './config/roles';
+
 
 // Componentes funcionales
 import PrivateRoute from './components/PrivateRoute';
@@ -28,6 +30,9 @@ import goalsService from './services/goalsService';
 import localStorageService from './services/localStorageService';
 import { startOfDay, endOfDay, parseActivityDate } from './utils/dates';
 import { matchesActivityType } from './components/dashboard/common/helpers';
+
+// El informe mensual (y su generador de PDF) se carga solo cuando se abre
+const MonthlyReportPage = React.lazy(() => import('./components/reports/MonthlyReportPage'));
 
 // Cambios del perfil que obligan a actualizar el usuario guardado localmente
 const profileChanged = (a, b) =>
@@ -306,7 +311,7 @@ function App() {
             
             {/* ✅ RUTAS PROTEGIDAS - Pasar user como prop */}
             <Route path="/activities" element={
-              <PrivateRoute user={user} allowedRoles={['field', 'contractor-admin', 'district']}> 
+              <PrivateRoute user={user} allowedRoles={['field', 'data-entry', 'contractor-admin']}> 
                 <ActivitiesPage user={user} />
               </PrivateRoute>
             } />
@@ -335,6 +340,18 @@ function App() {
               </PrivateRoute>
             } />
             
+            <Route path="/informe" element={
+              <PrivateRoute user={user} allowedRoles={['district', 'contractor-admin']}>
+                <React.Suspense fallback={
+                  <Box sx={{ display: 'flex', justifyContent: 'center', p: 6 }}>
+                    <CircularProgress />
+                  </Box>
+                }>
+                  <MonthlyReportPage user={user} />
+                </React.Suspense>
+              </PrivateRoute>
+            } />
+            
             <Route path="/diagnostic" element={
               <PrivateRoute user={user} allowedRoles={['district']}>
                 <DiagnosticPage />
@@ -342,7 +359,7 @@ function App() {
             } />
             
             <Route path="/profile" element={
-              <PrivateRoute user={user} allowedRoles={['field', 'contractor-admin', 'district']}>
+              <PrivateRoute user={user} allowedRoles={['field', 'data-entry', 'contractor-admin', 'district']}>
                 <ProfilePanel user={user} />
               </PrivateRoute>
             } />
@@ -352,10 +369,7 @@ function App() {
               path="/" 
               element={
                 !user ? <Navigate to="/login" replace /> : 
-                user.role === 'field' ? <Navigate to="/activities" replace /> :
-                user.role === 'contractor-admin' ? <Navigate to="/approval" replace /> :
-                user.role === 'district' ? <Navigate to="/dashboard" replace /> :
-                <Navigate to="/login" replace /> 
+                <Navigate to={HOME_BY_ROLE[user.role] || '/login'} replace />
               } 
             />
             

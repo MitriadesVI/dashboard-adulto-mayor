@@ -3,8 +3,10 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import {
   Container, Grid, Paper, Typography, Box,
-  CircularProgress, LinearProgress, Tab, Tabs, Alert
+  CircularProgress, LinearProgress, Tab, Tabs, Alert, Button
 } from '@mui/material';
+import { useNavigate } from 'react-router-dom';
+import DescriptionIcon from '@mui/icons-material/Description';
 
 // Importar componentes modulares
 import FilterPanel, { ACTIVITY_TYPE_OPTIONS, LOCATION_TYPE_OPTIONS } from './filters/FilterPanel';
@@ -107,6 +109,8 @@ function TabPanel(props) {
 const Dashboard = ({ user, activities, goals, loading, onFilterChange }) => {
   // La carga inicial la hace el componente padre (App); aquí no se dispara ninguna carga al montar.
 
+  const navigate = useNavigate();
+
   // Estado para pestañas
   const [tabValue, setTabValue] = useState(0);
 
@@ -191,12 +195,27 @@ const Dashboard = ({ user, activities, goals, loading, onFilterChange }) => {
   return (
     <Container maxWidth="xl">
       <Box sx={{ py: 4 }}>
-        <Typography variant="h4" component="h1" gutterBottom>
-          Dashboard - Programa Adulto Mayor
-        </Typography>
-        <Typography variant="subtitle1" gutterBottom color="text.secondary">
-          Monitoreo de actividades de los contratistas
-        </Typography>
+        <Box sx={{ display: 'flex', flexWrap: 'wrap', alignItems: 'flex-start', justifyContent: 'space-between', gap: 2 }}>
+          <Box>
+            <Typography variant="h4" component="h1" gutterBottom>
+              Dashboard - Programa Adulto Mayor
+            </Typography>
+            <Typography variant="subtitle1" gutterBottom color="text.secondary">
+              Monitoreo de actividades de los contratistas
+            </Typography>
+          </Box>
+          <Button
+            variant="contained"
+            startIcon={<DescriptionIcon />}
+            onClick={() => navigate(
+              isAllContractors(appliedFilters.contractor)
+                ? '/informe'
+                : `/informe?contractor=${encodeURIComponent(appliedFilters.contractor)}`
+            )}
+          >
+            Informe mensual
+          </Button>
+        </Box>
 
         {/* Mensaje de error si existe */}
         {error && (

@@ -141,3 +141,34 @@ export const summarizeAttendance = (activities) => {
  * Personas atendidas (atajo de summarizeAttendance(...).people).
  */
 export const calculatePeopleAttended = (activities) => summarizeAttendance(activities).people;
+
+const rationLocationType = (location) => {
+  const type = normalizeText(location?.type);
+  if (type === 'center' || type.includes('centro') || type.includes('cdv') || type.includes('fijo')) return 'center';
+  if (type === 'park' || type.includes('parque') || type.includes('espacio')) return 'park';
+  return 'other';
+};
+
+/**
+ * Raciones (CDV) y meriendas (parques) entregadas, sin doble conteo: por sede + fecha +
+ * jornada se toma el máximo entre los registros con alimentación (un registro educativo
+ * con ración y otro solo de ración del mismo grupo son una sola entrega).
+ * Devuelve { center, park, other, total, deliveries } (deliveries = jornadas con entrega).
+ */
+export const summarizeRations = (activities) => {
+  const groups = new Map();
+  (activities || []).forEach((activity) => {
+    const rations = getActivityRations(activity);
+    if (!rations) return;
+    const key = attendanceGroupKey(activity);
+    const group = groups.get(key) || { rations: 0, type: rationLocationType(activity.location) };
+    group.rations = Math.max(group.rations, rations);
+    groups.set(key, group);
+  });
+  const result = { center: 0, park: 0, other: 0, total: 0, deliveries: groups.size };
+  groups.forEach((group) => {
+    result[group.type] += group.rations;
+    result.total += group.rations;
+  });
+  return result;
+};
