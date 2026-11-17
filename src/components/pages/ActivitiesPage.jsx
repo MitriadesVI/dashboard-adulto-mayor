@@ -56,6 +56,7 @@ import {
   formatSchedule,
   formatLocationType
 } from '../dashboard/common/helpers';
+import { getContractorName } from '../../config/contractors';
 
 // ========== LAZY LOADING PARA FIELDDASHBOARD ==========
 const FieldUserDashboard = React.lazy(() => import('../field/FieldUserDashboard'));
@@ -611,7 +612,7 @@ const ActivitiesPage = ({ user }) => {
               Panel de Usuario
             </Typography>
             <Typography variant="subtitle1" color="text.secondary">
-              {userContractor} - {user?.name}
+              {getContractorName(userContractor)} - {user?.name}
             </Typography>
           </Grid>
         </Grid>
@@ -674,7 +675,7 @@ const ActivitiesPage = ({ user }) => {
                         </Grid>
                         <Grid item xs={12} md={6}>
                           <Typography variant="body2">
-                            <strong>Contratista:</strong> {selectedActivity.contractor}
+                            <strong>Contratista:</strong> {getContractorName(selectedActivity.contractor)}
                           </Typography>
                         </Grid>
                         <Grid item xs={12} md={6}>

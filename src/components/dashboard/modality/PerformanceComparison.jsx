@@ -11,14 +11,14 @@ import {
   Tooltip, Legend, RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, Radar
 } from 'recharts';
 import { getPerformanceComparisons } from '../common/helpers';
-import { getContractorColor } from '../../../config/contractors';
+import { getContractorColor, getContractorName } from '../../../config/contractors';
 
 const PerformanceComparison = ({ activities, title = "Análisis Comparativo de Rendimiento" }) => {
   const comparisons = useMemo(() => getPerformanceComparisons(activities), [activities]);
 
   // Preparar datos para gráfico de barras
   const chartData = Object.entries(comparisons.combined).map(([key, data]) => ({
-    name: `${data.contractor}\n${data.modalityType}`,
+    name: `${getContractorName(data.contractor)}\n${data.modalityType}`,
     contractor: data.contractor,
     modalityType: data.modalityType,
     activities: data.activities,
@@ -106,7 +106,7 @@ const PerformanceComparison = ({ activities, title = "Análisis Comparativo de R
                 labelFormatter={(label, payload) => {
                   if (payload && payload.length > 0) {
                     const data = payload[0].payload;
-                    return `${data.contractor} - ${data.modalityType}`;
+                    return `${getContractorName(data.contractor)} - ${data.modalityType}`;
                   }
                   return label;
                 }}
@@ -142,7 +142,7 @@ const PerformanceComparison = ({ activities, title = "Análisis Comparativo de R
                 {contractorNames.map((contractor) => (
                   <Radar
                     key={contractor}
-                    name={contractor}
+                    name={getContractorName(contractor)}
                     dataKey={contractor}
                     stroke={getContractorColor(contractor)}
                     fill={getContractorColor(contractor)}
@@ -180,7 +180,7 @@ const PerformanceComparison = ({ activities, title = "Análisis Comparativo de R
                   const performanceLevel = getPerformanceLevel(row.efficiency, 'efficiency');
                   return (
                     <TableRow key={index}>
-                      <TableCell>{row.contractor}</TableCell>
+                      <TableCell>{getContractorName(row.contractor)}</TableCell>
                       <TableCell>{row.modalityType}</TableCell>
                       <TableCell align="right">{row.activities}</TableCell>
                       <TableCell align="right">{row.uniqueLocations}</TableCell>

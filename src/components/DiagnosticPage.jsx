@@ -4,6 +4,7 @@ import React, { useState, useEffect } from 'react';
 import { collection, getDocs } from 'firebase/firestore';
 import { db } from '../firebase/config';
 import { Box, Paper, Typography, CircularProgress, Button, List, ListItem, Divider } from '@mui/material';
+import { getContractorName } from '../config/contractors';
 
 const DiagnosticPage = () => {
   const [loading, setLoading] = useState(false);
@@ -85,7 +86,7 @@ const DiagnosticPage = () => {
                       {activity.type} - {activity.subtype} ({activity.status})
                     </Typography>
                     <Typography variant="body2">
-                      Contratista: {activity.contractor} | 
+                      Contratista: {getContractorName(activity.contractor)} | 
                       Fecha: {activity.date} | 
                       Beneficiarios: {activity.beneficiarios || activity.beneficiaries}
                     </Typography>

@@ -1,6 +1,6 @@
 // src/components/dashboard/common/helpers.js
 
-import { getContractor } from '../../../config/contractors';
+import { getContractor, getContractorName } from '../../../config/contractors';
 import { parseActivityDate, toDateKey, todayKey } from '../../../utils/dates';
 
 const TYPE_LABELS = {
@@ -367,7 +367,7 @@ export const exportToCSV = (activities) => {
         activity.date ? formatDate(activity.date) : '',
         type ? getActivityTypeLabel(type, activity.contractor) : '',
         subtype ? getActivitySubtypeLabel(type, subtype, activity.contractor) : '',
-        activity.contractor || '',
+        getContractorName(activity.contractor),
         activity.location?.name || '',
         activity.location?.type ? formatLocationType(activity.location.type) : '',
         formatSchedule(activity.schedule),

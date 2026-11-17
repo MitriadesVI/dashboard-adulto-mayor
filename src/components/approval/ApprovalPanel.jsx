@@ -51,6 +51,7 @@ import {
   formatSchedule,
   formatLocationType
 } from '../dashboard/common/helpers';
+import { getContractorName } from '../../config/contractors';
 
 // Los errores que lanza activitiesService (Error simple con mensaje en español, p. ej.
 // "La actividad ya fue revisada por otra persona") se muestran tal cual. Los errores de
@@ -566,7 +567,7 @@ const ApprovalPanel = ({ user, onUserUpdate }) => {
                         </Grid>
                         <Grid item xs={12} md={6}>
                           <Typography variant="body2">
-                            <strong>Contratista:</strong> {selectedActivity.contractor}
+                            <strong>Contratista:</strong> {getContractorName(selectedActivity.contractor)}
                           </Typography>
                         </Grid>
                         <Grid item xs={12} md={6}>

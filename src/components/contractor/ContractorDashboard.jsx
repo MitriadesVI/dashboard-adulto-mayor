@@ -13,7 +13,7 @@ import FileDownloadIcon from '@mui/icons-material/FileDownload';
 import activitiesService from '../../services/activitiesService';
 import goalsService from '../../services/goalsService';
 import locationsService from '../../services/locationsService';
-import { getContractorName } from '../../config/contractors';
+import { getContractorName, getContractorFullName } from '../../config/contractors';
 import { parseActivityDate, toDateKey, startOfDay, endOfDay, todayKey } from '../../utils/dates';
 import { getActivityTypeLabel, calculateUniqueAttendance, exportToCSV } from '../dashboard/common/helpers';
 
@@ -200,9 +200,16 @@ const ContractorDashboard = ({ user }) => {
     <Container maxWidth="lg">
       <Box sx={{ py: 4 }}>
         <Box sx={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', gap: 2, mb: 2 }}>
-          <Typography variant="h4" component="h1">
-            Dashboard de {getContractorName(contractor)}
-          </Typography>
+          <Box>
+            <Typography variant="h4" component="h1">
+              Dashboard de {getContractorName(contractor)}
+            </Typography>
+            {getContractorFullName(contractor) !== getContractorName(contractor) && (
+              <Typography variant="body2" color="text.secondary">
+                {getContractorFullName(contractor)}
+              </Typography>
+            )}
+          </Box>
           <Button
             variant="outlined"
             startIcon={<RefreshIcon />}

@@ -4,6 +4,7 @@ import { Button } from '@mui/material';
 import FileDownloadIcon from '@mui/icons-material/FileDownload';
 import { prepareDataForCSVExport } from '../utils/fieldHelpers';
 import { dateToKey } from '../../../utils/dates';
+import { getContractorName } from '../../../config/contractors';
 
 const FieldExportButton = ({ activities, userContractor, dateRange, periodLabel }) => {
   
@@ -71,7 +72,10 @@ const FieldExportButton = ({ activities, userContractor, dateRange, periodLabel 
       // Generar nombre de archivo con rango de fechas (en hora local, no UTC)
       const startDateStr = dateToKey(dateRange.currentStartDate);
       const endDateStr = dateToKey(dateRange.currentEndDate);
-      const fileName = `reporte_actividades_${userContractor}_${startDateStr}_a_${endDateStr}.csv`;
+      const contractorSlug = getContractorName(userContractor)
+        .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+        .replace(/[^A-Za-z0-9]+/g, '_').replace(/^_|_$/g, '');
+      const fileName = `reporte_actividades_${contractorSlug}_${startDateStr}_a_${endDateStr}.csv`;
       
       // Usar función directa de CSV
       generateCSVDirect(dataForCSV, fileName);

@@ -8,6 +8,7 @@ import {
   PieChart, Pie, Cell, Tooltip, Legend, ResponsiveContainer
 } from 'recharts';
 import { COLORS } from '../common/helpers';
+import { getContractorName } from '../../../config/contractors';
 
 // Componente para el tooltip personalizado que muestra cantidad y porcentaje
 const CustomTooltip = ({ active, payload }) => {
@@ -180,7 +181,7 @@ const ModalityDistributionChart = ({ activities }) => {
             {topContractors.map((contractor, index) => (
               <Grid item xs={12} md={4} key={contractor}>
                 <Typography variant="h6" align="center" gutterBottom>
-                  {contractor}
+                  {getContractorName(contractor)}
                 </Typography>
                 <ResponsiveContainer width="100%" height={300}>
                   <PieChart>

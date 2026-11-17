@@ -702,7 +702,7 @@ const AdminPanel = ({ user }) => {
                   <TableBody>
                     {allGoals.map((goal) => (
                       <TableRow key={goal.id}>
-                        <TableCell>{goal.contractor}</TableCell>
+                        <TableCell>{getContractorName(goal.contractor)}</TableCell>
                         <TableCell>{goal.year}</TableCell>
                         <TableCell>
                           {goal.updatedAt && goal.updatedAt.toDate ? new Date(goal.updatedAt.toDate()).toLocaleDateString('es-ES') : 'N/A'}

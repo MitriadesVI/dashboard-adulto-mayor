@@ -15,7 +15,7 @@ import AssignmentIcon from '@mui/icons-material/Assignment';
 
 // Importar el servicio de ubicaciones
 import locationsService from '../../../services/locationsService';
-import { CONTRACTORS } from '../../../config/contractors';
+import { CONTRACTORS, getContractorName } from '../../../config/contractors';
 import { getLocationType } from '../common/helpers';
 
 const contractors = CONTRACTORS;
@@ -261,7 +261,7 @@ const LocationManager = ({ user }) => {
                     </Typography>
                     <br />
                     <Typography component="span" variant="body2" color="text.secondary">
-                      Asignado a: {location.contractor || 'Sin asignar'}
+                      Asignado a: {location.contractor ? getContractorName(location.contractor) : 'Sin asignar'}
                     </Typography>
                   </>
                 }

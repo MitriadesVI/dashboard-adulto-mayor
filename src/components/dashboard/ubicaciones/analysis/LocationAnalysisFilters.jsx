@@ -8,6 +8,7 @@ import ZoomInIcon from '@mui/icons-material/ZoomIn';
 import AssessmentIcon from '@mui/icons-material/Assessment';
 import LocationOnIcon from '@mui/icons-material/LocationOn';
 import { todayKey } from '../../../../utils/dates';
+import { getContractorName } from '../../../../config/contractors';
 
 const LocationAnalysisFilters = ({ 
   availableLocations, 
@@ -54,7 +55,7 @@ const LocationAnalysisFilters = ({
                     <Box sx={{ display: 'flex', alignItems: 'center' }}>
                       <LocationOnIcon sx={{ mr: 1, fontSize: 16, color: 'text.secondary' }} />
                       {location.name}
-                      <Chip label={location.contractor} size="small" sx={{ ml: 1.5 }} variant="outlined"/>
+                      <Chip label={getContractorName(location.contractor)} size="small" sx={{ ml: 1.5 }} variant="outlined"/>
                       {location.capacity > 0 && (
                         <Chip label={`Cap: ${location.capacity}`} size="small" sx={{ ml: 0.5 }} color="primary"/>
                       )}
@@ -114,7 +115,7 @@ const LocationAnalysisFilters = ({
           <Box sx={{ mt: 2.5, p: 1.5, bgcolor: 'action.hover', borderRadius: 1 }}>
             <Alert severity="info" icon={<LocationOnIcon fontSize="inherit" />}>
               <Typography variant="subtitle1" component="div">
-                <strong>{selectedLocationInfo.name}</strong> - {selectedLocationInfo.type} - {selectedLocationInfo.contractor}
+                <strong>{selectedLocationInfo.name}</strong> - {selectedLocationInfo.type} - {getContractorName(selectedLocationInfo.contractor)}
                 {selectedLocationInfo.capacity > 0 && ` - Capacidad: ${selectedLocationInfo.capacity} personas`}
               </Typography>
             </Alert>

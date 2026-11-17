@@ -8,6 +8,7 @@ import {
   getLocationType
 } from '../../dashboard/common/helpers';
 import { parseActivityDate, toDateKey, dateToKey, todayKey } from '../../../utils/dates';
+import { getContractorName } from '../../../config/contractors';
 
 /**
  * Filtra las actividades para incluir solo las educativas.
@@ -225,7 +226,7 @@ export const prepareDataForCSVExport = (activitiesToExport, contractor) => {
         Estado: activity.status === 'approved' ? 'Aprobada' : 'Pendiente',
         Tipo: tipo,
         Subtipo: subtipo,
-        Contratista: activity.contractor || '',
+        Contratista: getContractorName(activity.contractor),
         Ubicacion: activity.location?.name || '',
         'Tipo Ubicacion': tipoUbicacion,
         Jornada: jornada,
