@@ -29,7 +29,9 @@ import {
   DialogActions,
   Chip,
   Switch,
-  Tooltip
+  Tooltip,
+  Checkbox,
+  FormControlLabel
 } from '@mui/material';
 import EditIcon from '@mui/icons-material/Edit';
 import SaveIcon from '@mui/icons-material/Save';
@@ -43,6 +45,7 @@ import authService from '../../services/authService';
 import { collection, getDocs, query, orderBy, doc, updateDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from '../../firebase/config';
 import { CONTRACTORS, DEFAULT_CONTRACTOR, getContractorName } from '../../config/contractors';
+import { ROLE_LABELS } from '../../config/roles';
 import { getActivityTypeLabel as getTypeLabelForContractor } from '../dashboard/common/helpers';
 
 const AdminPanel = ({ user }) => {
@@ -71,8 +74,9 @@ const AdminPanel = ({ user }) => {
     name: '',
     email: '',
     password: '',
-    role: 'field',
-    contractor: DEFAULT_CONTRACTOR
+    role: 'contractor-admin',
+    contractor: DEFAULT_CONTRACTOR,
+    sendSetupEmail: true
   });
 
   // Cargar datos según la pestaña activa
@@ -233,10 +237,10 @@ const AdminPanel = ({ user }) => {
   // FIN DE SECCIÓN REEMPLAZADA 1
 
   const handleUserInputChange = (e) => {
-    const { name, value } = e.target;
+    const { name, value, type, checked } = e.target;
     setNewUser(prev => ({
       ...prev,
-      [name]: value
+      [name]: type === 'checkbox' ? checked : value
     }));
   };
 
@@ -244,7 +248,7 @@ const AdminPanel = ({ user }) => {
     try {
       setSaving(true);
       
-      if (!newUser.name || !newUser.email || !newUser.password || !newUser.role) {
+      if (!newUser.name || !newUser.email || (!newUser.sendSetupEmail && newUser.password.length < 6) || !newUser.role) {
         setSnackbar({
           open: true,
           message: 'Por favor complete todos los campos obligatorios',
@@ -280,20 +284,27 @@ const AdminPanel = ({ user }) => {
         userData.contractor = 'DISTRITO'; // Asignar valor específico para usuarios district
       }
       
-      await authService.registerUser(newUser.email, newUser.password, userData);
+      const created = await authService.registerUser(newUser.email.trim(), newUser.password, { ...userData, hasLogin: true }, {
+        sendSetupEmail: newUser.sendSetupEmail
+      });
       
       setSnackbar({
         open: true,
-        message: 'Usuario creado correctamente',
-        severity: 'success'
+        message: newUser.sendSetupEmail
+          ? (created.setupEmailSent
+            ? `Usuario creado. Se envió un correo a ${newUser.email.trim()} para que cree su contraseña.`
+            : 'Usuario creado, pero no se pudo enviar el correo. Puede usar "¿Olvidó su contraseña?" en el inicio de sesión.')
+          : 'Usuario creado correctamente',
+        severity: newUser.sendSetupEmail && !created.setupEmailSent ? 'warning' : 'success'
       });
       
       setNewUser({
         name: '',
         email: '',
         password: '',
-        role: 'field',
-        contractor: DEFAULT_CONTRACTOR
+        role: 'contractor-admin',
+        contractor: DEFAULT_CONTRACTOR,
+        sendSetupEmail: true
       });
       
       setUserDialogOpen(false);
@@ -314,20 +325,14 @@ const AdminPanel = ({ user }) => {
     setSnackbar(prev => ({ ...prev, open: false }));
   };
 
-  const getRoleLabel = (role) => {
-    const roleMap = {
-      'district': 'Funcionario Distrital',
-      'contractor-admin': 'Representante de Contratista',
-      'field': 'Personal de Campo'
-    };
-    return roleMap[role] || role;
-  };
+  const getRoleLabel = (role) => ROLE_LABELS[role] || role;
 
   const getRoleChipColor = (role) => {
     switch (role) {
       case 'district': return 'error';
       case 'contractor-admin': return 'warning';
       case 'field': return 'primary';
+      case 'data-entry': return 'info';
       default: return 'default';
     }
   };
@@ -841,7 +846,7 @@ const AdminPanel = ({ user }) => {
         onClose={() => {
             setUserDialogOpen(false);
             // Opcional: resetear newUser state si no se guarda
-             setNewUser({ name: '', email: '', password: '', role: 'field', contractor: DEFAULT_CONTRACTOR });
+             setNewUser({ name: '', email: '', password: '', role: 'contractor-admin', contractor: DEFAULT_CONTRACTOR, sendSetupEmail: true });
         }}
         maxWidth="sm"
         fullWidth
@@ -872,16 +877,25 @@ const AdminPanel = ({ user }) => {
               />
             </Grid>
             <Grid item xs={12}>
-              <TextField
-                fullWidth
-                label="Contraseña"
-                name="password"
-                type="password"
-                value={newUser.password}
-                onChange={handleUserInputChange}
-                required
+              <FormControlLabel
+                control={<Checkbox checked={newUser.sendSetupEmail} onChange={handleUserInputChange} name="sendSetupEmail" />}
+                label="Enviarle un correo para que cree su propia contraseña (recomendado)"
               />
             </Grid>
+            {!newUser.sendSetupEmail && (
+              <Grid item xs={12}>
+                <TextField
+                  fullWidth
+                  label="Contraseña inicial"
+                  name="password"
+                  type="password"
+                  value={newUser.password}
+                  onChange={handleUserInputChange}
+                  helperText="Mínimo 6 caracteres"
+                  required
+                />
+              </Grid>
+            )}
             <Grid item xs={12} md={newUser.role === 'district' ? 12 : 6}>
               <FormControl fullWidth required>
                 <InputLabel>Rol</InputLabel>
@@ -891,8 +905,9 @@ const AdminPanel = ({ user }) => {
                   label="Rol"
                   onChange={handleUserInputChange}
                 >
-                  <MenuItem value="field">Personal de Campo</MenuItem>
-                  <MenuItem value="contractor-admin">Representante de Contratista</MenuItem>
+                  <MenuItem value="contractor-admin">Representante legal de la entidad</MenuItem>
+                  <MenuItem value="data-entry">Encargado de carga</MenuItem>
+                  <MenuItem value="field">Profesional de campo</MenuItem>
                   <MenuItem value="district">Funcionario Distrital</MenuItem>
                 </Select>
               </FormControl>
@@ -929,7 +944,7 @@ const AdminPanel = ({ user }) => {
         <DialogActions sx={{ p: '16px 24px' }}>
           <Button onClick={() => {
               setUserDialogOpen(false);
-              setNewUser({ name: '', email: '', password: '', role: 'field', contractor: DEFAULT_CONTRACTOR });
+              setNewUser({ name: '', email: '', password: '', role: 'contractor-admin', contractor: DEFAULT_CONTRACTOR, sendSetupEmail: true });
             }}
             color="inherit"
           >

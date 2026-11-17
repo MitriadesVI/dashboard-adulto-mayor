@@ -67,7 +67,7 @@ const OverviewTab = ({ activities, goals, user }) => {
       .sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
   }, [activities]);
 
-  // Evita el doble conteo: agrupa por ubicación + fecha + jornada y toma el máximo
+  // Sin doble conteo: máximo entre asistentes y raciones por sede + fecha + jornada (J1 + J2 suman)
   const beneficiariesTotal = useMemo(() => calculateUniqueAttendance(activities), [activities]);
   const educationalCount = useMemo(() => getEducationalActivityCount(activities), [activities]);
   const overallProgress = useMemo(() => getOverallProgress(goals), [goals]);
@@ -92,13 +92,13 @@ const OverviewTab = ({ activities, goals, user }) => {
           <Card>
             <CardContent>
               <Typography variant="h6" gutterBottom align="center">
-                Total de Beneficiarios
+                Personas Atendidas
               </Typography>
               <Typography variant="h3" align="center" color="primary">
                 {beneficiariesTotal}
               </Typography>
               <Typography variant="caption" align="center" display="block" sx={{ mt: 1, color: 'text.secondary' }}>
-                (Evita duplicados por jornada)
+                (Sin doble conteo por jornada)
               </Typography>
             </CardContent>
           </Card>

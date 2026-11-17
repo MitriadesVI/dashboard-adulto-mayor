@@ -16,6 +16,9 @@ import {
 } from '@mui/material';
 import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { getContractorName } from '../config/contractors';
+import { getRoleLabel } from '../config/roles';
+import DescriptionIcon from '@mui/icons-material/Description';
+import EditNoteIcon from '@mui/icons-material/EditNote';
 import MenuIcon from '@mui/icons-material/Menu';
 import AccountCircleIcon from '@mui/icons-material/AccountCircle';
 import DashboardIcon from '@mui/icons-material/Dashboard';
@@ -56,13 +59,20 @@ const Navbar = ({ user, onLogout, offline }) => {
       return [
         { label: 'Mis Actividades', path: '/activities', icon: <AssignmentIcon /> }
       ];
+    } else if (user.role === 'data-entry') {
+      return [
+        { label: 'Registro de Actividades', path: '/activities', icon: <EditNoteIcon /> }
+      ];
     } else if (user.role === 'contractor-admin') {
       return [
-        { label: 'Aprobación', path: '/approval', icon: <CheckCircleIcon /> }
+        { label: 'Aprobación', path: '/approval', icon: <CheckCircleIcon /> },
+        { label: 'Registrar', path: '/activities', icon: <EditNoteIcon /> },
+        { label: 'Informe mensual', path: '/informe', icon: <DescriptionIcon /> }
       ];
     } else if (user.role === 'district') {
       return [
         { label: 'Dashboard', path: '/dashboard', icon: <DashboardIcon /> },
+        { label: 'Informe mensual', path: '/informe', icon: <DescriptionIcon /> },
         { label: 'Administración', path: '/admin', icon: <AdminPanelSettingsIcon /> }
       ];
     }
@@ -184,8 +194,7 @@ const Navbar = ({ user, onLogout, offline }) => {
               <Box>
                 <Typography variant="body1">{user.name}</Typography>
                 <Typography variant="body2" color="text.secondary">
-                  {user.role === 'district' ? 'Distrito' : getContractorName(user.contractor)} - {user.role === 'field' ? 'Personal de Campo' : 
-                   user.role === 'contractor-admin' ? 'Representante Legal' : 'Funcionario Distrital'}
+                  {user.role === 'district' ? 'Distrito' : getContractorName(user.contractor)} - {getRoleLabel(user.role, user.adminType)}
                 </Typography>
               </Box>
             </MenuItem>

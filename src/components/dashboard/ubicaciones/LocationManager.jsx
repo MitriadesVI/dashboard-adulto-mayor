@@ -1,6 +1,6 @@
 // src/components/dashboard/ubicaciones/LocationManager.jsx
 
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, Suspense, lazy } from 'react';
 import {
   Card, CardHeader, CardContent, Grid, TextField, Button,
   List, ListItem, ListItemText, ListItemSecondaryAction,
@@ -19,6 +19,36 @@ import { CONTRACTORS, getContractorName } from '../../../config/contractors';
 import { getLocationType } from '../common/helpers';
 
 const contractors = CONTRACTORS;
+
+// El mapa (Leaflet) se carga solo al abrir el formulario de una sede
+const LocationPickerMap = lazy(() =>
+  import('../../coverage/CoverageMap').then((module) => ({ default: module.LocationPickerMap }))
+);
+
+// Rango aproximado del Distrito de Barranquilla (aviso suave, no bloquea el guardado)
+const LAT_RANGE = [10.8, 11.1];
+const LNG_RANGE = [-74.95, -74.7];
+
+const coordinateToText = (value) => (value === null || value === undefined || value === '' ? '' : String(value));
+
+// Texto → número (acepta coma decimal). null si está vacío o no es un número válido.
+const parseCoordinateText = (text) => {
+  const clean = String(text ?? '').trim().replace(',', '.');
+  if (clean === '') return null;
+  const value = Number(clean);
+  return Number.isFinite(value) ? value : null;
+};
+
+const hasCoordinates = (location) => {
+  const texts = coordinatesToTexts(location?.coordinates);
+  return parseCoordinateText(texts.lat) !== null && parseCoordinateText(texts.lng) !== null;
+};
+
+// Coordenadas guardadas ({lat, lng} o {latitude, longitude}) → textos del formulario
+const coordinatesToTexts = (coordinates) => ({
+  lat: coordinateToText(coordinates?.lat ?? coordinates?.latitude),
+  lng: coordinateToText(coordinates?.lng ?? coordinates?.longitude)
+});
 
 // Componente TabPanel para manejar el contenido de las pestañas
 function TabPanel(props) {
@@ -57,6 +87,10 @@ const LocationManager = ({ user }) => {
     contractor: ''
   });
   
+  // Coordenadas del formulario (texto, para poder editarlas a mano)
+  const [latText, setLatText] = useState('');
+  const [lngText, setLngText] = useState('');
+
   // Estado para filtros
   const [filterContractor, setFilterContractor] = useState('all');
   const [filterType, setFilterType] = useState('all');
@@ -115,10 +149,16 @@ const LocationManager = ({ user }) => {
     if (location) {
       setSelectedLocation(location);
       setFormData({ ...location });
+      const texts = coordinatesToTexts(location.coordinates);
+      setLatText(texts.lat);
+      setLngText(texts.lng);
     } else {
       setSelectedLocation(null);
       setFormData({ name: '', type: 'center', address: '', capacity: '', contractor: '' });
+      setLatText('');
+      setLngText('');
     }
+    setError(null);
     setDialogOpen(true);
   };
   
@@ -136,23 +176,37 @@ const LocationManager = ({ user }) => {
       return;
     }
     
+    // Coordenadas: ambas vacías → sin ubicar; si hay una debe haber la otra y ser números válidos
+    const lat = parseCoordinateText(latText);
+    const lng = parseCoordinateText(lngText);
+    const hasLat = latText.trim() !== '';
+    const hasLng = lngText.trim() !== '';
+    if (hasLat !== hasLng || (hasLat && (lat === null || lng === null))) {
+      setError("Latitud y longitud deben ser números válidos (o dejar ambas vacías).");
+      return;
+    }
+    const payload = {
+      ...formData,
+      coordinates: hasLat ? { lat, lng } : null
+    };
+
     setLoading(true);
     setError(null);
     
     try {
       if (selectedLocation) {
         // Actualizar ubicación existente
-        await locationsService.updateLocation(selectedLocation.id, formData);
+        await locationsService.updateLocation(selectedLocation.id, payload);
         
         // Actualizar estado local
         setLocations(prevLocations => 
           prevLocations.map(loc => 
-            loc.id === selectedLocation.id ? { ...formData, id: loc.id } : loc
+            loc.id === selectedLocation.id ? { ...payload, id: loc.id } : loc
           )
         );
       } else {
         // Crear nueva ubicación
-        const newLocation = await locationsService.createLocation(formData);
+        const newLocation = await locationsService.createLocation(payload);
         
         // Actualizar estado local
         setLocations(prev => [...prev, newLocation]);
@@ -260,6 +314,10 @@ const LocationManager = ({ user }) => {
                       Capacidad: {location.capacity} personas
                     </Typography>
                     <br />
+                    <Typography component="span" variant="body2" color={hasCoordinates(location) ? 'text.secondary' : 'warning.main'}>
+                      {hasCoordinates(location) ? 'Ubicación en el mapa: sí' : 'Sin ubicar en el mapa'}
+                    </Typography>
+                    <br />
                     <Typography component="span" variant="body2" color="text.secondary">
                       Asignado a: {location.contractor ? getContractorName(location.contractor) : 'Sin asignar'}
                     </Typography>
@@ -299,6 +357,18 @@ const LocationManager = ({ user }) => {
     );
   };
   
+  // Valores numéricos de las coordenadas del formulario
+  const latValue = parseCoordinateText(latText);
+  const lngValue = parseCoordinateText(lngText);
+  const coordinatesOutOfRange =
+    (latValue !== null && (latValue < LAT_RANGE[0] || latValue > LAT_RANGE[1])) ||
+    (lngValue !== null && (lngValue < LNG_RANGE[0] || lngValue > LNG_RANGE[1]));
+
+  const handlePickCoordinates = (lat, lng) => {
+    setLatText(lat.toFixed(6));
+    setLngText(lng.toFixed(6));
+  };
+
   // Mostrar pantalla de carga si está cargando
   if (loading && locations.length === 0) {
     return (
@@ -551,11 +621,12 @@ const LocationManager = ({ user }) => {
         </TabPanel>
         
         {/* Dialog para crear/editar ubicación */}
-        <Dialog open={dialogOpen} onClose={() => setDialogOpen(false)}>
+        <Dialog open={dialogOpen} onClose={() => setDialogOpen(false)} fullWidth maxWidth="sm">
           <DialogTitle>
             {selectedLocation ? 'Editar Espacio' : 'Nuevo Espacio'}
           </DialogTitle>
           <DialogContent>
+            {error && <Alert severity="error" sx={{ mt: 1 }}>{error}</Alert>}
             <Grid container spacing={2} sx={{ mt: 1 }}>
               <Grid item xs={12}>
                 <TextField
@@ -612,6 +683,58 @@ const LocationManager = ({ user }) => {
                     ))}
                   </Select>
                 </FormControl>
+              </Grid>
+              <Grid item xs={12}>
+                <Typography variant="subtitle2">Ubicación en el mapa (opcional)</Typography>
+                <Typography variant="caption" color="text.secondary">
+                  Haz clic en el mapa para marcar la sede, o escribe las coordenadas. Se usan en el Mapa de cobertura.
+                </Typography>
+              </Grid>
+              <Grid item xs={6}>
+                <TextField
+                  fullWidth
+                  size="small"
+                  label="Latitud"
+                  value={latText}
+                  onChange={(e) => setLatText(e.target.value)}
+                  inputProps={{ inputMode: 'decimal' }}
+                  placeholder="10.968500"
+                  error={latText.trim() !== '' && latValue === null}
+                  helperText={latText.trim() !== '' && latValue === null ? 'Número no válido' : ' '}
+                />
+              </Grid>
+              <Grid item xs={6}>
+                <TextField
+                  fullWidth
+                  size="small"
+                  label="Longitud"
+                  value={lngText}
+                  onChange={(e) => setLngText(e.target.value)}
+                  inputProps={{ inputMode: 'decimal' }}
+                  placeholder="-74.781300"
+                  error={lngText.trim() !== '' && lngValue === null}
+                  helperText={lngText.trim() !== '' && lngValue === null ? 'Número no válido' : ' '}
+                />
+              </Grid>
+              {coordinatesOutOfRange && (
+                <Grid item xs={12}>
+                  <Alert severity="warning">
+                    Estas coordenadas parecen estar fuera de Barranquilla. Verifica que sean correctas (puedes guardarlas igualmente).
+                  </Alert>
+                </Grid>
+              )}
+              <Grid item xs={12}>
+                <Suspense fallback={<Box sx={{ display: 'flex', justifyContent: 'center', py: 4 }}><CircularProgress size={28} /></Box>}>
+                  <LocationPickerMap
+                    value={latValue !== null && lngValue !== null ? { lat: latValue, lng: lngValue } : null}
+                    onChange={handlePickCoordinates}
+                  />
+                </Suspense>
+                {(latText || lngText) && (
+                  <Button size="small" sx={{ mt: 0.5 }} onClick={() => { setLatText(''); setLngText(''); }}>
+                    Quitar ubicación
+                  </Button>
+                )}
               </Grid>
             </Grid>
           </DialogContent>

@@ -4,14 +4,16 @@
 // cuáles no. Componente genérico: lo usa el dashboard del contratista y puede usarlo el
 // distrito con todas las sedes y todas las actividades (showContractor).
 
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, Suspense, lazy } from 'react';
 import {
   Box, Typography, Card, CardActionArea, CardContent, Chip, Alert, Tooltip,
   FormControl, InputLabel, Select, MenuItem, TextField, InputAdornment,
   Table, TableBody, TableCell, TableContainer, TableHead, TableRow,
-  TableSortLabel, TablePagination, LinearProgress, Paper
+  TableSortLabel, TablePagination, LinearProgress, Paper, ToggleButton, ToggleButtonGroup, CircularProgress
 } from '@mui/material';
 import SearchIcon from '@mui/icons-material/Search';
+import TableRowsIcon from '@mui/icons-material/TableRows';
+import MapIcon from '@mui/icons-material/Map';
 
 import { formatDate } from '../dashboard/common/helpers';
 import { toDateKey, todayKey } from '../../utils/dates';
@@ -25,6 +27,9 @@ import {
   computeLocationCoverage,
   summarizeCoverage
 } from './coverageUtils';
+
+// El mapa (Leaflet) se carga solo cuando se abre la vista "Mapa"
+const CoverageMap = lazy(() => import('./CoverageMap'));
 
 const STATUS_META = {
   [COVERAGE_STATUS.OK]: {
@@ -114,6 +119,7 @@ const LocationCoveragePanel = ({
   showContractor = false,
   referenceDate
 }) => {
+  const [view, setView] = useState('table'); // 'table' | 'map'
   const [searchText, setSearchText] = useState('');
   const [typeFilter, setTypeFilter] = useState('all');
   const [statusFilter, setStatusFilter] = useState('all');
@@ -342,6 +348,38 @@ const LocationCoveragePanel = ({
             )}
           </Box>
 
+          {/* VISTA: tabla o mapa */}
+          <Box sx={{ display: 'flex', justifyContent: 'flex-end', mb: 1.5 }}>
+            <ToggleButtonGroup
+              size="small"
+              exclusive
+              value={view}
+              onChange={(event, value) => { if (value) setView(value); }}
+              aria-label="Vista de cobertura"
+            >
+              <ToggleButton value="table" aria-label="Ver tabla">
+                <TableRowsIcon fontSize="small" sx={{ mr: 0.5 }} /> Tabla
+              </ToggleButton>
+              <ToggleButton value="map" aria-label="Ver mapa">
+                <MapIcon fontSize="small" sx={{ mr: 0.5 }} /> Mapa
+              </ToggleButton>
+            </ToggleButtonGroup>
+          </Box>
+
+          {view === 'map' && (
+            <Suspense
+              fallback={(
+                <Box sx={{ display: 'flex', justifyContent: 'center', py: 6 }}>
+                  <CircularProgress />
+                </Box>
+              )}
+            >
+              <CoverageMap rows={sortedRows} locations={locations} showContractor={showContractor} />
+            </Suspense>
+          )}
+
+          {view === 'table' && (
+          <>
           {/* TABLA (con desplazamiento horizontal en pantallas pequeñas) */}
           <TableContainer component={Paper} variant="outlined" sx={{ overflowX: 'auto' }}>
             <Table size="small" sx={{ minWidth: showContractor ? 940 : 820 }} aria-label="Cobertura de sedes">
@@ -498,6 +536,8 @@ const LocationCoveragePanel = ({
             labelRowsPerPage="Filas por página"
             labelDisplayedRows={({ from, to, count }) => `${from}–${to} de ${count}`}
           />
+          </>
+          )}
 
           <Typography variant="caption" color="text.secondary" sx={{ display: 'block' }}>
             Al día: hasta {OK_MAX_DAYS} días · En alerta: {OK_MAX_DAYS + 1} a {WARNING_MAX_DAYS} días · Crítica: más de {WARNING_MAX_DAYS} días.

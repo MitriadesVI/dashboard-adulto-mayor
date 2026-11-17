@@ -31,7 +31,7 @@ const calculateKPIs = (activities) => {
 
   return {
     totalActivities: educationalActivities.length,
-    // Asistencia sin doble conteo (máximo por ubicación + fecha + jornada)
+    // Personas atendidas: máximo entre asistentes y raciones por sede + fecha + jornada
     totalBeneficiaries: calculateUniqueAttendance(list),
     uniqueLocations: locationNames.size,
     // Promedio de asistencia por jornada de servicio (asistencia única / número de jornadas)
@@ -66,11 +66,11 @@ const KPICards = ({ activities }) => {
       {/* Tarjeta Total Beneficiarios - CORREGIDA */}
       <Grid item xs={12} sm={6} md={3}>
         <DashboardCard 
-          title="Total Beneficiarios"
+          title="Personas Atendidas"
           value={totalBeneficiaries}
           icon={<PeopleIcon sx={{ fontSize: 40 }} />}
           color="success"
-          subtitle="Evita duplicados por jornada"
+          subtitle="Sin doble conteo por jornada (J1 + J2 suman)"
         />
       </Grid>
       
@@ -144,7 +144,7 @@ const KPICards = ({ activities }) => {
           value={nutritionStats.total}
           icon={<FastfoodIcon sx={{ fontSize: 40 }} />}
           color="primary"
-          subtitle="Raciones + Meriendas"
+          subtitle="Raciones entregadas + Meriendas"
         />
       </Grid>
     </Grid>

@@ -33,7 +33,7 @@ const PerformanceComparison = ({ activities, title = "Análisis Comparativo de R
   const contractorNames = Object.keys(comparisons.byContractor);
   const radarMetrics = [
     { dimension: 'Actividades', getValue: (data) => data.activities },
-    { dimension: 'Beneficiarios por jornada', getValue: (data) => data.avgBeneficiaries },
+    { dimension: 'Personas por jornada', getValue: (data) => data.avgBeneficiaries },
     { dimension: 'Cobertura (ubicaciones)', getValue: (data) => data.uniqueLocations },
     { dimension: 'Actividades por ubicación', getValue: (data) => (data.uniqueLocations > 0 ? data.activities / data.uniqueLocations : 0) }
   ];
@@ -83,7 +83,7 @@ const PerformanceComparison = ({ activities, title = "Análisis Comparativo de R
         {/* Gráfico de barras comparativo */}
         <Box sx={{ mb: 4 }}>
           <Typography variant="h6" gutterBottom>
-            Actividades y Beneficiarios por Jornada, por Contratista-Modalidad
+            Actividades y Personas Atendidas por Jornada, por Contratista-Modalidad
           </Typography>
           <ResponsiveContainer width="100%" height={300}>
             <BarChart data={chartData} margin={{ bottom: 60 }}>
@@ -100,7 +100,7 @@ const PerformanceComparison = ({ activities, title = "Análisis Comparativo de R
               <Tooltip 
                 formatter={(value, name, props) => {
                   if (name === 'activities') return [`${value} actividades`, 'Actividades'];
-                  if (name === 'avgBeneficiaries') return [`${value} promedio`, 'Beneficiarios Promedio'];
+                  if (name === 'avgBeneficiaries') return [`${value} promedio`, 'Personas Promedio'];
                   return [value, name];
                 }}
                 labelFormatter={(label, payload) => {
@@ -121,7 +121,7 @@ const PerformanceComparison = ({ activities, title = "Análisis Comparativo de R
               <Bar 
                 yAxisId="right"
                 dataKey="avgBeneficiaries" 
-                name="Beneficiarios por jornada" 
+                name="Personas por jornada" 
                 fill="#82ca9d"
               />
             </BarChart>
@@ -169,8 +169,8 @@ const PerformanceComparison = ({ activities, title = "Análisis Comparativo de R
                   <TableCell><strong>Modalidad</strong></TableCell>
                   <TableCell align="right"><strong>Actividades</strong></TableCell>
                   <TableCell align="right"><strong>Ubicaciones</strong></TableCell>
-                  <TableCell align="right"><strong>Total Benef.</strong></TableCell>
-                  <TableCell align="right"><strong>Benef. por jornada</strong></TableCell>
+                  <TableCell align="right"><strong>Personas atendidas</strong></TableCell>
+                  <TableCell align="right"><strong>Personas por jornada</strong></TableCell>
                   <TableCell align="right"><strong>Eficiencia</strong></TableCell>
                   <TableCell align="center"><strong>Nivel</strong></TableCell>
                 </TableRow>

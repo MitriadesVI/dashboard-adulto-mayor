@@ -10,7 +10,7 @@ import { getAverageBeneficiariesByLocation } from '../common/helpers';
 
 const BeneficiariesByLocation = ({ 
   activities, 
-  title = "Promedio de Beneficiarios por Ubicación", 
+  title = "Promedio de Personas Atendidas por Ubicación", 
   topCount = 3 // Mostrar top 3 de cada modalidad
 }) => {
   // Usar la función auxiliar para calcular promedios
@@ -43,7 +43,7 @@ const BeneficiariesByLocation = ({
               tickFormatter={(value) => `${value} (${data.find(item => item.name === value)?.type})`}
             />
             <Tooltip 
-              formatter={(value) => [`${value} beneficiarios (promedio)`, 'Promedio']}
+              formatter={(value) => [`${value} personas (promedio)`, 'Promedio']}
               labelFormatter={(value) => {
                 const item = data.find(item => item.name === value);
                 return `${value} (${item?.type})`;
@@ -52,7 +52,7 @@ const BeneficiariesByLocation = ({
             <Legend />
             <Bar 
               dataKey="value" 
-              name="Promedio Beneficiarios"
+              name="Promedio Personas"
               fill="#8884d8"
               isAnimationActive={true}
               animationDuration={500}

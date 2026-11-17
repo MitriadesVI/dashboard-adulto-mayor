@@ -14,6 +14,13 @@ import {
 import { doc, setDoc, getDoc, serverTimestamp, updateDoc } from 'firebase/firestore';
 import { auth, db, getSecondaryAuth } from '../firebase/config';
 
+// Contraseña aleatoria para cuentas que definirán su propia contraseña por correo
+const randomPassword = () => {
+  const bytes = new Uint8Array(18);
+  window.crypto.getRandomValues(bytes);
+  return Array.from(bytes, b => b.toString(36).padStart(2, '0')).join('') + 'A9!';
+};
+
 const appError = (code, message) => {
   const error = new Error(message);
   error.code = code;
@@ -69,11 +76,14 @@ const authService = {
   // Crea la cuenta de otro usuario sin cerrar la sesión del administrador:
   // la cuenta se crea en una instancia secundaria de Auth y el perfil lo escribe
   // el administrador (las reglas de Firestore solo permiten que un admin cree perfiles).
-  registerUser: async (email, password, userData) => {
+  // Con options.sendSetupEmail no se fija contraseña: se envía al usuario un correo para
+  // que cree la suya (así nadie tiene que compartir contraseñas).
+  registerUser: async (email, password, userData, options = {}) => {
     const secondaryAuth = await getSecondaryAuth();
     let createdUser = null;
+    const initialPassword = options.sendSetupEmail ? randomPassword() : password;
     try {
-      const userCredential = await createUserWithEmailAndPassword(secondaryAuth, email, password);
+      const userCredential = await createUserWithEmailAndPassword(secondaryAuth, email, initialPassword);
       createdUser = userCredential.user;
 
       const userProfileDataToSave = { ...userData };
@@ -95,8 +105,18 @@ const authService = {
         throw appError('app/profile-write-failed', 'No se pudo guardar el perfil del usuario (permisos insuficientes o sin conexión).');
       }
 
+      let setupEmailSent = false;
+      if (options.sendSetupEmail) {
+        try {
+          await sendPasswordResetEmail(auth, email);
+          setupEmailSent = true;
+        } catch (emailError) {
+          console.error('No se pudo enviar el correo para crear la contraseña:', emailError);
+        }
+      }
+
       console.log("✅ Usuario creado:", email);
-      return { uid: createdUser.uid, email: createdUser.email, ...userProfileDataToSave };
+      return { uid: createdUser.uid, email: createdUser.email, ...userProfileDataToSave, setupEmailSent };
     } catch (error) {
       console.error('❌ Error al registrar usuario:', error.code, error.message);
       if (error.code === 'auth/email-already-in-use') {

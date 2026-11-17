@@ -2,6 +2,15 @@
 
 import { getContractor, getContractorName } from '../../../config/contractors';
 import { parseActivityDate, toDateKey, todayKey } from '../../../utils/dates';
+import {
+  getActivityPeople,
+  getActivityRations,
+  getActivityAttendees,
+  getPerformer,
+  groupAttendance,
+  summarizeAttendance,
+  summarizeRations
+} from '../../../utils/attendance';
 
 const TYPE_LABELS = {
   nutrition: { education: 'Educación Nutricional', health: 'Salud Nutricional', generic: 'Nutrición' },
@@ -109,37 +118,18 @@ export const formatMonthLabel = (monthKey) => {
   return date ? date.toLocaleDateString('es-CO', { month: 'long', year: 'numeric' }) : String(monthKey || '');
 };
 
-// Función para contar raciones y meriendas por tipo de ubicación
+// Función para contar raciones y meriendas por tipo de ubicación (raciones entregadas, ver utils/attendance)
 export const getNutritionCountByLocationType = (activities) => {
   if (!activities || !Array.isArray(activities) || activities.length === 0) {
     return { centers: 0, parks: 0, total: 0 };
   }
-  
-  // Filtrar solo actividades con entrega de alimentos
-  const nutritionActivities = activities.filter(a => 
-    a && a.nutritionDelivery && a.nutritionDelivery.included === true
-  );
-  
-  // Calcular raciones por tipo de ubicación
-  const centerRations = nutritionActivities
-    .filter(a => {
-      const locationType = getLocationType(a.location);
-      return locationType === 'center' && a.nutritionDelivery.included;
-    })
-    .reduce((sum, a) => sum + (Number(a.totalBeneficiaries) || 0), 0);
-  
-  // Calcular meriendas por tipo de ubicación
-  const parkSnacks = nutritionActivities
-    .filter(a => {
-      const locationType = getLocationType(a.location);
-      return locationType === 'park' && a.nutritionDelivery.included;
-    })
-    .reduce((sum, a) => sum + (Number(a.totalBeneficiaries) || 0), 0);
-    
+
+  // Máximo por sede + fecha + jornada (ver src/utils/attendance.js)
+  const rations = summarizeRations(activities);
   return {
-    centers: centerRations,
-    parks: parkSnacks,
-    total: centerRations + parkSnacks
+    centers: rations.center,
+    parks: rations.park,
+    total: rations.center + rations.park
   };
 };
 
@@ -206,15 +196,11 @@ export const getNutritionStats = (activities) => {
     a && a.nutritionDelivery && a.nutritionDelivery.included === true
   );
   
-  // Contar raciones (centros) - estas son beneficios, no actividades
-  const centerRations = nutritionActivities
-    .filter(a => getLocationType(a.location) === 'center')
-    .reduce((sum, a) => sum + (Number(a.totalBeneficiaries) || 0), 0);
-    
-  // Contar meriendas (parques) - estas son beneficios, no actividades
-  const parkSnacks = nutritionActivities
-    .filter(a => getLocationType(a.location) === 'park')
-    .reduce((sum, a) => sum + (Number(a.totalBeneficiaries) || 0), 0);
+  // Raciones (centros) y meriendas (parques): beneficios, no actividades.
+  // Máximo por sede + fecha + jornada para no contar dos veces la misma entrega.
+  const rationTotals = summarizeRations(nutritionActivities);
+  const centerRations = rationTotals.center;
+  const parkSnacks = rationTotals.park;
     
   // Total combinado de beneficiarios
   const totalNutrition = centerRations + parkSnacks;
@@ -258,7 +244,7 @@ export const getNutritionStatsByLocation = (activities) => {
     }
     
     // Incrementar contadores según tipo de ubicación
-    const beneficiaries = Number(activity.totalBeneficiaries) || 0;
+    const beneficiaries = getActivityRations(activity);
     
     if (locationType === 'center') {
       locationStats[locationName].centerRations += beneficiaries;
@@ -269,6 +255,15 @@ export const getNutritionStatsByLocation = (activities) => {
     }
   });
   
+  // Corregir con la regla sin doble conteo (máximo por sede + fecha + jornada)
+  Object.values(locationStats).forEach(stat => {
+    const totals = summarizeRations(activities.filter(a =>
+      a?.location?.name === stat.name && a.nutritionDelivery?.included));
+    stat.centerRations = stat.type === 'center' ? totals.total : 0;
+    stat.parkSnacks = stat.type === 'park' ? totals.total : 0;
+    stat.total = stat.centerRations + stat.parkSnacks;
+  });
+
   // Convertir a array y ordenar por total
   return Object.values(locationStats).sort((a, b) => b.total - a.total);
 };
@@ -344,7 +339,7 @@ export const exportToCSV = (activities) => {
   if (!activities || !activities.length) return;
   
   // Crear encabezado CSV
-  let csv = 'Fecha,Tipo,Subtipo,Contratista,Ubicación,Tipo Ubicación,Jornada,Beneficiarios,Descripción\n';
+  let csv = 'Fecha,Tipo,Subtipo,Contratista,Ubicación,Tipo Ubicación,Jornada,Beneficiarios,Raciones,Realizada por,Registrada por,Descripción\n';
   
   // Agregar cada actividad
   activities.forEach(activity => {
@@ -372,6 +367,9 @@ export const exportToCSV = (activities) => {
         activity.location?.type ? formatLocationType(activity.location.type) : '',
         formatSchedule(activity.schedule),
         activity.totalBeneficiaries || 0,
+        getActivityRations(activity),
+        getPerformer(activity).name,
+        activity.createdBy?.name || getPerformer(activity).name,
         activity.educationalActivity?.description || ''
       ];
       
@@ -457,7 +455,7 @@ export const getAverageBeneficiariesByLocation = (activities, topCount = 3) => {
   const locationData = {};
   
   activities.forEach(activity => {
-    if (!activity || !activity.location || !activity.location.name || !activity.totalBeneficiaries) {
+    if (!activity || !activity.location || !activity.location.name || !getActivityPeople(activity)) {
       return;
     }
     
@@ -534,7 +532,7 @@ export const getAverageBeneficiariesByActivityType = (activities) => {
     
     if (typeCounts[type] !== undefined) {
       typeCounts[type] += 1;
-      typeBeneficiaries[type] += (Number(activity.totalBeneficiaries) || 0);
+      typeBeneficiaries[type] += getActivityAttendees(activity);
     }
   });
   
@@ -673,7 +671,7 @@ export const getTemporalAnalysisByModality = (activities) => {
       byDay[modalityType][dayOfWeek] = { count: 0, beneficiaries: 0 };
     }
     byDay[modalityType][dayOfWeek].count++;
-    byDay[modalityType][dayOfWeek].beneficiaries += Number(activity.totalBeneficiaries) || 0;
+    byDay[modalityType][dayOfWeek].beneficiaries += getActivityAttendees(activity);
 
     // Por semana (ISO)
     if (!byWeek[weekKey]) {
@@ -750,38 +748,24 @@ export const generateComparisonData = (activities, field = 'beneficiaries') => {
     return getLocationType(a.location) === 'park';
   });
   
-  // Calcular por fecha
-  const centerByDate = {};
-  const parkByDate = {};
-  
-  centerActivities.forEach(activity => {
-    if (!activity || !activity.date) return;
-    
-    const dateKey = toDateKey(activity.date);
-    if (!dateKey) return;
-    centerByDate[dateKey] = (centerByDate[dateKey] || 0) + 
-      (field === 'count' ? 1 : (Number(activity.totalBeneficiaries) || 0));
-  });
-  
-  parkActivities.forEach(activity => {
-    if (!activity || !activity.date) return;
-    
-    const dateKey = toDateKey(activity.date);
-    if (!dateKey) return;
-    parkByDate[dateKey] = (parkByDate[dateKey] || 0) + 
-      (field === 'count' ? 1 : (Number(activity.totalBeneficiaries) || 0));
-  });
-  
-  // Convertir a arrays para gráficos
-  const centerData = Object.entries(centerByDate)
-    .map(([date, value]) => ({ date, value }))
-    .sort((a, b) => a.date.localeCompare(b.date));
-    
-  const parkData = Object.entries(parkByDate)
-    .map(([date, value]) => ({ date, value }))
-    .sort((a, b) => a.date.localeCompare(b.date));
-    
-  return { centerData, parkData };
+  // Agrupar por fecha; las personas atendidas por día se calculan sin doble conteo por jornada
+  const byDate = (list) => {
+    const grouped = {};
+    list.forEach(activity => {
+      if (!activity || !activity.date) return;
+      const dateKey = toDateKey(activity.date);
+      if (!dateKey) return;
+      (grouped[dateKey] = grouped[dateKey] || []).push(activity);
+    });
+    return Object.entries(grouped)
+      .map(([date, list]) => ({
+        date,
+        value: field === 'count' ? list.length : summarizeAttendance(list).people
+      }))
+      .sort((a, b) => a.date.localeCompare(b.date));
+  };
+
+  return { centerData: byDate(centerActivities), parkData: byDate(parkActivities) };
 };
 
 // ========== FUNCIONES NUEVAS PARA CORREGIR DOBLE CONTEO ==========
@@ -794,58 +778,30 @@ export const generateComparisonData = (activities, field = 'beneficiaries') => {
 export const getAttendanceGroups = (activities) => {
   const groups = new Map();
   if (!activities || !Array.isArray(activities)) return groups;
-
-  activities.forEach(activity => {
-    if (!activity || !activity.location) return;
-
-    const dateKey = activity.dateKey || toDateKey(activity.date);
-    if (!dateKey) return; // Sin fecha válida no se puede agrupar
-
-    const schedule = activity.schedule || 'general';
-    const locationName = activity.location.name || 'Desconocida';
-    const groupKey = `${locationName}-${dateKey}-${schedule}`;
-    const beneficiaries = Number(activity.totalBeneficiaries) || 0;
-
-    groups.set(groupKey, Math.max(groups.get(groupKey) || 0, beneficiaries));
-  });
-
+  groupAttendance(activities).forEach(group => groups.set(group.key, group.people));
   return groups;
 };
 
 /**
- * FUNCIÓN CRÍTICA: Calcular asistencia única evitando duplicaciones
- * Suma el máximo de beneficiarios de cada grupo ubicación + fecha + jornada.
+ * Personas atendidas sin doble conteo: máximo (asistentes, raciones) por sede + fecha + jornada;
+ * J1 y J2 se suman. Delega en utils/attendance.
  */
-export const calculateUniqueAttendance = (activities) => {
-  let total = 0;
-  getAttendanceGroups(activities).forEach(max => { total += max; });
-  return total;
-};
+export const calculateUniqueAttendance = (activities) =>
+  summarizeAttendance(Array.isArray(activities) ? activities : []).people;
 
 /**
- * Promedio de asistencia por jornada de servicio: asistencia única / número de grupos
- * ubicación + fecha + jornada (no / número de registros, que diluiría el promedio).
+ * Promedio de personas atendidas por jornada de servicio (sede + fecha + jornada).
  */
-export const calculateAverageAttendance = (activities) => {
-  const groups = getAttendanceGroups(activities);
-  if (groups.size === 0) return 0;
-  return Math.round(calculateUniqueAttendance(activities) / groups.size);
-};
+export const calculateAverageAttendance = (activities) =>
+  summarizeAttendance(Array.isArray(activities) ? activities : []).averagePerJornada;
 
 /**
- * FUNCIÓN AUXILIAR: Calcular beneficiarios únicos por usuario específico
- * Filtra actividades del usuario y aplica la misma lógica de agrupación
+ * Personas atendidas en las actividades REALIZADAS por un profesional (performedBy, o createdBy en
+ * actividades antiguas), con la misma regla de agrupación.
  */
 export const calculateUniqueAttendanceByUser = (activities, userUid) => {
   if (!activities || !Array.isArray(activities) || activities.length === 0) {
     return 0;
   }
-
-  // Filtrar solo actividades del usuario específico
-  const userActivities = activities.filter(activity => 
-    activity && activity.createdBy && activity.createdBy.uid === userUid
-  );
-
-  // Usar la función principal para calcular asistencia única
-  return calculateUniqueAttendance(userActivities);
+  return calculateUniqueAttendance(activities.filter(a => a && getPerformer(a).uid === userUid));
 };

@@ -6,7 +6,14 @@ rules_version = '2';
 //   district          → Distrito: lee todo, administra usuarios, sedes y metas.
 //   contractor-admin  → Representante/administrador del contratista: su equipo y sus actividades.
 //                       adminType 'main' (o sin adminType) = representante principal.
-//   field             → Personal de campo: registra y consulta sus actividades.
+//   data-entry        → Encargado de carga: registra actividades a nombre de los profesionales
+//                       de su contratista.
+//   field             → Profesional de campo: registra y consulta sus actividades. Puede no
+//                       tener cuenta (hasLogin == false): solo existe para que otro registre por él.
+//
+// Quién puede registrar actividades lo decide el representante legal en
+// contractorSettings/{contractor}.registration { professionals, dataEntry, representative }
+// (por defecto, todos).
 // Un usuario con active == false no puede leer ni escribir nada.
 //
 // Desplegar con:  firebase deploy --only firestore:rules,firestore:indexes
@@ -43,8 +50,44 @@ service cloud.firestore {
       return isContractorAdmin() && me().get('adminType', 'main') == 'main';
     }
 
+    function isDataEntry() {
+      return isActive() && me().role == 'data-entry';
+    }
+
     function myContractor() {
       return me().contractor;
+    }
+
+    function settingsPath(contractor) {
+      return /databases/$(database)/documents/contractorSettings/$(contractor);
+    }
+
+    function registrationAllows(key) {
+      return !exists(settingsPath(myContractor()))
+        || get(settingsPath(myContractor())).data.get('registration', {}).get(key, true) != false;
+    }
+
+    // ¿El usuario puede registrar actividades según la decisión de su entidad?
+    function canRegister() {
+      return (me().role == 'field' && registrationAllows('professionals'))
+        || (me().role == 'data-entry' && registrationAllows('dataEntry'))
+        || (me().role == 'contractor-admin' && registrationAllows('representative'));
+    }
+
+    function userPath(uid) {
+      return /databases/$(database)/documents/users/$(uid);
+    }
+
+    // Profesional que realizó la actividad: un profesional solo registra a su nombre;
+    // el encargado o el representante eligen un profesional de campo de su contratista.
+    function performerIsValid(data) {
+      return (me().role == 'field'
+          && (data.get('performedBy', null) == null || data.performedBy.uid == request.auth.uid))
+        || (me().role != 'field'
+          && data.get('performedBy', null) != null
+          && exists(userPath(data.performedBy.uid))
+          && get(userPath(data.performedBy.uid)).data.contractor == myContractor()
+          && get(userPath(data.performedBy.uid)).data.role == 'field');
     }
 
     function unchanged(field) {
@@ -55,14 +98,17 @@ service cloud.firestore {
     match /users/{uid} {
       allow read: if (signedIn() && request.auth.uid == uid)
         || isDistrict()
-        || (isContractorAdmin() && resource.data.contractor == myContractor());
+        || (isContractorAdmin() && resource.data.contractor == myContractor())
+        // El encargado de carga necesita la lista de profesionales de su contratista
+        || (isDataEntry() && resource.data.contractor == myContractor());
 
-      // Solo un administrador crea perfiles (la cuenta de Auth se crea aparte).
-      // Un contratista solo crea personal de campo o administradores secundarios de su contratista.
+      // Solo un administrador crea perfiles (la cuenta de Auth se crea aparte, o no existe
+      // para profesionales sin acceso). Un contratista solo crea profesionales, encargados
+      // de carga o administradores secundarios de su contratista.
       allow create: if isDistrict()
         || (isContractorAdmin()
             && request.resource.data.contractor == myContractor()
-            && request.resource.data.role in ['field', 'contractor-admin']
+            && request.resource.data.role in ['field', 'data-entry', 'contractor-admin']
             && request.resource.data.get('adminType', 'secondary') != 'main');
 
       allow update: if isDistrict()
@@ -72,7 +118,7 @@ service cloud.firestore {
             && unchanged('contractor')
             && unchanged('uid')
             && unchanged('email')
-            && request.resource.data.role in ['field', 'contractor-admin']
+            && request.resource.data.role in ['field', 'data-entry', 'contractor-admin']
             && (unchanged('adminType') || request.resource.data.get('adminType', 'secondary') != 'main'))
         // Cada usuario: solo sus datos de perfil
         || (signedIn() && request.auth.uid == uid
@@ -86,15 +132,21 @@ service cloud.firestore {
     match /activities/{activityId} {
       allow read: if isDistrict()
         || (isActive() && resource.data.createdBy.uid == request.auth.uid)
+        // Profesional: actividades que un encargado o el representante registraron a su nombre
+        || (isActive() && resource.data.performedBy.uid == request.auth.uid)
         || (isContractorAdmin() && resource.data.contractor == myContractor())
         // Personal de campo: actividades aprobadas de su contratista (comparativos)
         || (isActive() && resource.data.contractor == myContractor() && resource.data.status == 'approved');
 
-      // Toda actividad nace pendiente, a nombre de quien la registra y de su contratista
+      // Toda actividad nace pendiente, registrada por quien la carga, en su contratista,
+      // si su entidad permite que ese rol registre y con un profesional válido
       allow create: if isActive()
         && request.resource.data.createdBy.uid == request.auth.uid
         && request.resource.data.status == 'pending'
-        && (isDistrict() || request.resource.data.contractor == myContractor());
+        && (isDistrict()
+            || (request.resource.data.contractor == myContractor()
+                && canRegister()
+                && performerIsValid(request.resource.data)));
 
       allow update: if isDistrict()
         // Aprobar / rechazar una actividad pendiente de su contratista
@@ -111,7 +163,8 @@ service cloud.firestore {
             && request.resource.data.status == 'pending'
             && unchanged('createdBy')
             && unchanged('contractor')
-            && unchanged('createdAt'));
+            && unchanged('createdAt')
+            && (unchanged('performedBy') || performerIsValid(request.resource.data)));
 
       // El autor puede borrar mientras esté pendiente
       allow delete: if isDistrict()
@@ -123,6 +176,17 @@ service cloud.firestore {
       allow read: if isDistrict()
         || (isActive() && resource.data.contractor == myContractor());
       allow write: if isDistrict();
+    }
+
+    // --------------------------------------------------- contractorSettings
+    // Configuración de cada entidad (quién registra actividades). La decide el
+    // representante legal (administrador principal) o el distrito.
+    match /contractorSettings/{contractorId} {
+      allow read: if isDistrict() || (isActive() && contractorId == myContractor());
+      allow write: if isDistrict()
+        || (isMainContractorAdmin()
+            && contractorId == myContractor()
+            && request.resource.data.contractor == contractorId);
     }
 
     // ---------------------------------------------------------------- goals

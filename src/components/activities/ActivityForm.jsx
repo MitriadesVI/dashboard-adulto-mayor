@@ -31,6 +31,8 @@ import locationsService from '../../services/locationsService';
 import { getActivityTypeLabel, getActivitySubtypeLabel } from '../dashboard/common/helpers';
 import { getContractorName } from '../../config/contractors';
 import { todayKey, toDateKey } from '../../utils/dates';
+import { registersOnBehalf } from '../../config/roles';
+import usersService from '../../services/usersService';
 
 // ========== FUNCIONES EXTERNAS (CRÍTICO) ==========
 // Las etiquetas dependen del contratista (ver src/config/contractors.js)
@@ -59,7 +61,16 @@ const getSubtypes = (type, contractor) => {
 };
 
 // ✅ CLAVE 1: SCHEMA DE VALIDACIÓN ESTÁTICO
-const createValidationSchema = () => Yup.object({
+const createValidationSchema = (requirePerformer = false) => Yup.object({
+  performerUid: requirePerformer
+    ? Yup.string().required('Seleccione el profesional que realizó la actividad')
+    : Yup.string().nullable(),
+  rations: Yup.number()
+    .transform((value, original) => (original === '' || original === null ? undefined : value))
+    .typeError('Debe ser un número')
+    .integer('Debe ser un número entero')
+    .min(0, 'No puede ser negativo')
+    .max(MAX_BENEFICIARIES, `Verifique el número: máximo ${MAX_BENEFICIARIES} raciones`),
   date: Yup.string()
     .required('Fecha requerida')
     .test('not-future', 'La fecha no puede ser futura', value => !value || value <= todayKey()),
@@ -102,6 +113,8 @@ const createValidationSchema = () => Yup.object({
 
 // ✅ CLAVE 2: VALORES INICIALES ESTÁTICOS
 const createInitialValues = (initialData) => ({
+  performerUid: initialData?.performedBy?.uid || '',
+  rations: initialData?.nutritionDelivery?.rations ?? '',
   date: (initialData?.date && toDateKey(initialData.date)) || todayKey(),
   locationName: initialData?.location?.name || '',
   locationType: initialData?.location?.type || '',
@@ -242,7 +255,7 @@ const TypeSelectionStep = React.memo(({ formik }) => (
   </Box>
 ));
 
-const BasicInfoStep = React.memo(({ formik, filteredLocations, loadingLocations }) => (
+const BasicInfoStep = React.memo(({ formik, filteredLocations, loadingLocations, requirePerformer, professionals, loadingProfessionals }) => (
   <Box sx={{ p: 3 }}>
     <Box sx={{ textAlign: 'center', mb: 4 }}>
       <Typography variant="h4" sx={{ mb: 1 }}>📍</Typography>
@@ -254,6 +267,39 @@ const BasicInfoStep = React.memo(({ formik, filteredLocations, loadingLocations 
       </Typography>
     </Box>
     <Grid container spacing={3}>
+      {requirePerformer && (
+        <Grid item xs={12}>
+          <Card variant="outlined">
+            <CardContent>
+              <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
+                <PeopleIcon sx={{ mr: 1, color: 'primary.main' }} />
+                <Typography variant="subtitle1" fontWeight="medium">Profesional que realizó la actividad</Typography>
+              </Box>
+              <TextField
+                select
+                fullWidth
+                name="performerUid"
+                value={formik.values.performerUid}
+                onChange={formik.handleChange}
+                onBlur={formik.handleBlur}
+                error={formik.touched.performerUid && Boolean(formik.errors.performerUid)}
+                helperText={(formik.touched.performerUid && formik.errors.performerUid) ||
+                  (!loadingProfessionals && professionals.length === 0
+                    ? 'No hay profesionales registrados. El representante legal los agrega en Usuarios.'
+                    : 'La actividad quedará a nombre de este profesional')}
+                disabled={loadingProfessionals || professionals.length === 0}
+              >
+                {professionals.map(professional => (
+                  <MenuItem key={professional.id} value={professional.id}>
+                    {professional.name}{professional.hasLogin === false ? ' (sin acceso a la app)' : ''}
+                  </MenuItem>
+                ))}
+              </TextField>
+            </CardContent>
+          </Card>
+        </Grid>
+      )}
+
       <Grid item xs={12}>
         <Card variant="outlined">
           <CardContent>
@@ -284,12 +330,14 @@ const BasicInfoStep = React.memo(({ formik, filteredLocations, loadingLocations 
           <CardContent>
             <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
               <PeopleIcon sx={{ mr: 1, color: 'primary.main' }} />
-              <Typography variant="subtitle1" fontWeight="medium">Beneficiarios</Typography>
+              <Typography variant="subtitle1" fontWeight="medium">
+                {formik.values.includeEducational ? 'Personas que participaron en la actividad' : 'Personas que recibieron ración'}
+              </Typography>
             </Box>
             <TextField
               key="beneficiaries-field" // ✅ Key estática
               fullWidth 
-              placeholder="Número total de beneficiarios"
+              placeholder={formik.values.includeEducational ? 'Número de participantes' : 'Número de personas'}
               value={formik.values.beneficiaries} 
               onChange={formik.handleChange} // ✅ Handler directo de formik
               onBlur={formik.handleBlur} 
@@ -305,6 +353,24 @@ const BasicInfoStep = React.memo(({ formik, filteredLocations, loadingLocations 
                 max: MAX_BENEFICIARIES
               }}
             />
+            {formik.values.includeEducational && formik.values.includeNutrition && (
+              <TextField
+                key="rations-field"
+                fullWidth
+                label={formik.values.locationType === 'park' ? 'Meriendas entregadas' : 'Raciones entregadas'}
+                placeholder="Si lo dejas vacío, igual a los participantes"
+                value={formik.values.rations}
+                onChange={formik.handleChange}
+                onBlur={formik.handleBlur}
+                name="rations"
+                error={formik.touched.rations && Boolean(formik.errors.rations)}
+                helperText={(formik.touched.rations && formik.errors.rations) ||
+                  'Solo si es distinto: por ejemplo, alguien recibió la ración pero no se quedó a la actividad'}
+                sx={{ mt: 2 }}
+                autoComplete="off"
+                inputProps={{ inputMode: 'numeric', pattern: '[0-9]*', min: 0, max: MAX_BENEFICIARIES }}
+              />
+            )}
           </CardContent>
         </Card>
       </Grid>
@@ -616,7 +682,7 @@ const ActivityDetailsStep = React.memo(({ formik, user }) => (
   </Box>
 ));
 
-const ConfirmationStep = React.memo(({ formik, user }) => (
+const ConfirmationStep = React.memo(({ formik, user, performerName }) => (
   <Box sx={{ p: 3 }}>
     <Box sx={{ textAlign: 'center', mb: 4 }}>
       <Typography variant="h4" sx={{ mb: 1 }}>✅</Typography>
@@ -639,10 +705,24 @@ const ConfirmationStep = React.memo(({ formik, user }) => (
                 label={`📅 ${formik.values.date ? new Date(formik.values.date + 'T00:00:00').toLocaleDateString() : 'Fecha no establecida'}`}
                 sx={{ mr: 1, mb: 1 }}
               />
+              {performerName && (
+                <Chip
+                  label={`🧑‍⚕️ Realizada por: ${performerName}`}
+                  color="primary"
+                  variant="outlined"
+                  sx={{ mr: 1, mb: 1 }}
+                />
+              )}
               <Chip
-                label={`👥 ${formik.values.beneficiaries || 0} beneficiarios`}
+                label={`👥 ${formik.values.beneficiaries || 0} ${formik.values.includeEducational ? 'participantes' : 'personas'}`}
                 sx={{ mr: 1, mb: 1 }}
               />
+              {formik.values.includeNutrition && (
+                <Chip
+                  label={`🍽️ ${formik.values.rations !== '' && formik.values.rations !== undefined ? formik.values.rations : (formik.values.beneficiaries || 0)} ${formik.values.locationType === 'park' ? 'meriendas' : 'raciones'}`}
+                  sx={{ mr: 1, mb: 1 }}
+                />
+              )}
               <Chip
                 label={`📍 ${formik.values.locationName || 'Ubicación no establecida'}`}
                 sx={{ mr: 1, mb: 1 }}
@@ -739,7 +819,11 @@ const ActivityForm = ({ user, onSuccess, initialData, onCancel }) => {
   ];
 
   // ✅ CLAVE 4: MEMOIZAR SCHEMA Y VALORES INICIALES
-  const validationSchema = useMemo(() => createValidationSchema(), []);
+  // El encargado de carga y el representante registran a nombre de un profesional
+  const requirePerformer = registersOnBehalf(user);
+  const validationSchema = useMemo(() => createValidationSchema(requirePerformer), [requirePerformer]);
+  const [professionals, setProfessionals] = useState([]);
+  const [loadingProfessionals, setLoadingProfessionals] = useState(false);
   const initialValues = useMemo(() => createInitialValues(initialData), [initialData]);
 
   // Corregir una actividad rechazada la actualiza y la devuelve a revisión;
@@ -757,9 +841,20 @@ const ActivityForm = ({ user, onSuccess, initialData, onCancel }) => {
         const selectedLocation = locations.find(loc =>
           loc?.name === values.locationName && loc?.type === values.locationType
         );
+        const performer = requirePerformer
+          ? professionals.find(p => p.id === values.performerUid)
+          : { id: user.uid, name: user.name };
+        if (!performer) {
+          setSnackbar({ open: true, message: 'Seleccione el profesional que realizó la actividad.', severity: 'warning' });
+          return;
+        }
+        const rationsValue = values.rations === '' || values.rations === null || values.rations === undefined
+          ? Number(values.beneficiaries)
+          : Number(values.rations);
         const activityData = {
           date: values.date,
           contractor: user.contractor,
+          performedBy: { uid: performer.id, name: performer.name || '' },
           locationId: selectedLocation?.id || null,
           location: {
             name: values.locationName,
@@ -777,6 +872,9 @@ const ActivityForm = ({ user, onSuccess, initialData, onCancel }) => {
             included: values.includeNutrition,
             type: values.includeNutrition ?
               (values.locationType === 'center' ? 'centerRation' : 'parkSnack') : null,
+            rations: values.includeNutrition
+              ? (values.includeEducational ? rationsValue : Number(values.beneficiaries))
+              : null,
             description: values.includeNutrition ?
               `Entrega de ${values.locationType === 'center' ? 'raciones alimenticias' : 'meriendas'} a los beneficiarios` : null
           },
@@ -825,6 +923,21 @@ const ActivityForm = ({ user, onSuccess, initialData, onCancel }) => {
     return activeLocations.filter(loc => loc?.type === locationType);
   }, [locations, formik.values.locationType]);
 
+  // Profesionales de la entidad (para el encargado de carga o el representante)
+  useEffect(() => {
+    if (!requirePerformer || !user?.contractor) return undefined;
+    let cancelled = false;
+    setLoadingProfessionals(true);
+    usersService.getContractorProfessionals(user.contractor)
+      .then(list => { if (!cancelled) setProfessionals(list); })
+      .catch(error => {
+        console.error('Error al cargar profesionales:', error);
+        if (!cancelled) setSnackbar({ open: true, message: 'Error al cargar los profesionales.', severity: 'error' });
+      })
+      .finally(() => { if (!cancelled) setLoadingProfessionals(false); });
+    return () => { cancelled = true; };
+  }, [requirePerformer, user?.contractor]);
+
   // ✅ CLAVE 6: CARGAR UBICACIONES SIN DEPENDENCIAS PROBLEMÁTICAS
   useEffect(() => {
     const loadLocations = async () => {
@@ -860,7 +973,9 @@ const ActivityForm = ({ user, onSuccess, initialData, onCancel }) => {
       case 0:
         return (formik.values.includeEducational || formik.values.includeNutrition) && !formik.errors.includeNutrition;
       case 1:
-        return formik.values.date && formik.values.beneficiaries &&
+        return (!requirePerformer || (formik.values.performerUid && !formik.errors.performerUid)) &&
+               !formik.errors.rations &&
+               formik.values.date && formik.values.beneficiaries &&
                formik.values.locationName && formik.values.locationType &&
                !formik.errors.date && !formik.errors.beneficiaries &&
                !formik.errors.locationName && !formik.errors.locationType &&
@@ -874,7 +989,7 @@ const ActivityForm = ({ user, onSuccess, initialData, onCancel }) => {
       default:
         return false;
     }
-  }, [currentStep, formik.values, formik.errors, formik.isValid]);
+  }, [currentStep, formik.values, formik.errors, formik.isValid, requirePerformer]);
 
   const nextStep = useCallback(() => {
     if (currentStep < steps.length - 1) setCurrentStep(currentStep + 1);
@@ -896,7 +1011,8 @@ const ActivityForm = ({ user, onSuccess, initialData, onCancel }) => {
       
       const fieldsToTouch = [];
       if (currentStep === 0) fieldsToTouch.push('includeEducational', 'includeNutrition');
-      if (currentStep === 1) fieldsToTouch.push('date', 'beneficiaries', 'locationType', 'locationName', 'schedule');
+      if (currentStep === 1) fieldsToTouch.push('date', 'beneficiaries', 'locationType', 'locationName', 'schedule', 'rations');
+      if (currentStep === 1 && requirePerformer) fieldsToTouch.push('performerUid');
       if (currentStep === 2) {
         if (formik.values.includeEducational) fieldsToTouch.push('type', 'subtype');
         fieldsToTouch.push('description');
@@ -923,7 +1039,7 @@ const ActivityForm = ({ user, onSuccess, initialData, onCancel }) => {
         severity: 'error'
       });
     }
-  }, [currentStep, formik, canProceedToNextStep, nextStep]);
+  }, [currentStep, formik, canProceedToNextStep, nextStep, requirePerformer]);
 
   // ✅ CLAVE 9: MEMOIZAR CONTENIDO DE PASOS
   const stepContent = useMemo(() => {
@@ -931,15 +1047,30 @@ const ActivityForm = ({ user, onSuccess, initialData, onCancel }) => {
       case 0: 
         return <TypeSelectionStep formik={formik} />;
       case 1: 
-        return <BasicInfoStep formik={formik} filteredLocations={filteredLocations} loadingLocations={loadingLocations} />;
+        return (
+          <BasicInfoStep
+            formik={formik}
+            filteredLocations={filteredLocations}
+            loadingLocations={loadingLocations}
+            requirePerformer={requirePerformer}
+            professionals={professionals}
+            loadingProfessionals={loadingProfessionals}
+          />
+        );
       case 2: 
         return <ActivityDetailsStep formik={formik} user={user} />;
       case 3: 
-        return <ConfirmationStep formik={formik} user={user} />;
+        return (
+          <ConfirmationStep
+            formik={formik}
+            user={user}
+            performerName={requirePerformer ? professionals.find(p => p.id === formik.values.performerUid)?.name : null}
+          />
+        );
       default: 
         return null;
     }
-  }, [currentStep, formik, filteredLocations, loadingLocations, user]);
+  }, [currentStep, formik, filteredLocations, loadingLocations, user, requirePerformer, professionals, loadingProfessionals]);
 
   if (!user || !user.contractor) {
     return (
