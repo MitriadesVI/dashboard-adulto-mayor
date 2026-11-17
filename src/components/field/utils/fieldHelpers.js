@@ -7,6 +7,7 @@ import {
   formatDate,
   getLocationType
 } from '../../dashboard/common/helpers';
+import { getPerformer, getActivityPeople, getActivityRations, isRegisteredOnBehalf } from '../../../utils/attendance';
 import { parseActivityDate, toDateKey, dateToKey, todayKey } from '../../../utils/dates';
 import { getContractorName } from '../../../config/contractors';
 
@@ -20,6 +21,22 @@ export const getEducationalActivities = (activities) => {
   return activities.filter(
     (activity) => activity?.educationalActivity?.included === true
   );
+};
+
+/**
+ * Une las actividades registradas por el usuario (createdBy) con las realizadas por él (performedBy),
+ * sin duplicados por id, y conserva solo las que realizó él (getPerformer(...).uid === userId).
+ * Así una actividad cargada por un encargado a nombre del profesional cuenta para el profesional,
+ * y una que el profesional registró a nombre de otro no.
+ */
+export const mergeUserActivities = (createdByUser, performedByUser, userId) => {
+  const byId = new Map();
+  [...(createdByUser || []), ...(performedByUser || [])].forEach((activity) => {
+    if (!activity) return;
+    const key = activity.id || `${activity.dateKey}|${activity.schedule}|${activity.createdAt?.seconds ?? ''}|${byId.size}`;
+    if (!byId.has(key)) byId.set(key, activity);
+  });
+  return Array.from(byId.values()).filter((activity) => getPerformer(activity).uid === userId);
 };
 
 /**
@@ -231,6 +248,9 @@ export const prepareDataForCSVExport = (activitiesToExport, contractor) => {
         'Tipo Ubicacion': tipoUbicacion,
         Jornada: jornada,
         Beneficiarios: activity.totalBeneficiaries || 0,
+        Raciones: getActivityRations(activity),
+        'Realizada por': getPerformer(activity).name,
+        'Registrada por': isRegisteredOnBehalf(activity) ? (activity.createdBy?.name || '') : getPerformer(activity).name,
         Descripcion: descripcion, // El escapado de comillas lo hace el generador de CSV
       };
     });
@@ -261,8 +281,8 @@ export const getComparativeData = (
     allActivitiesCollection.filter(act =>
       act.contractor === currentUserContractor &&
       act.status === 'approved' &&
-      act.createdBy?.uid !== currentUserId &&
-      act.createdBy?.role === 'field' &&
+      getPerformer(act).uid !== currentUserId &&
+      (act.createdBy?.role === 'field' || !!act.performedBy?.uid) &&
       act.educationalActivity?.included === true
     ),
     periodStartDate,
@@ -272,11 +292,14 @@ export const getComparativeData = (
   // 2. Agrupar actividades de colegas por UID
   const colleaguesData = {};
   colleaguesActivitiesInPeriod.forEach(act => {
-    const colleagueId = act.createdBy.uid;
+    // Por quien realizó la actividad (no por quien la registró)
+    const performer = getPerformer(act);
+    const colleagueId = performer.uid;
     if (!colleaguesData[colleagueId]) {
       colleaguesData[colleagueId] = {
+        uid: colleagueId,
         activities: [],
-        name: act.createdBy.name,
+        name: performer.name,
       };
     }
     colleaguesData[colleagueId].activities.push(act);
@@ -286,7 +309,7 @@ export const getComparativeData = (
   const colleaguesMetrics = Object.values(colleaguesData).map(colleague => {
     const kpis = calculateFieldUserKPIs(colleague.activities);
     return {
-      uid: colleague.activities[0].createdBy.uid,
+      uid: colleague.uid,
       name: colleague.name,
       totalEducationalActivities: kpis.totalEducationalActivities,
       uniqueBeneficiaries: kpis.uniqueBeneficiaries,
@@ -371,7 +394,7 @@ export const generateAchievements = (comparativeData, contractor) => {
   if (bestAverageUser && bestAverageUser.uid === currentUserMetrics.uid && currentUserMetrics.avgBeneficiariesPerActivity > 0) {
     achievements.push({
       title: '🌟 Mejor Promedio',
-      description: `¡Excelente promedio de ${currentUserMetrics.avgBeneficiariesPerActivity} beneficiarios por jornada!`,
+      description: `¡Excelente promedio de ${currentUserMetrics.avgBeneficiariesPerActivity} personas atendidas por jornada!`,
       value: currentUserMetrics.avgBeneficiariesPerActivity
     });
   }
@@ -449,7 +472,7 @@ export const generateInsights = (
           locationsProductivity[act.location.name] = { count: 0, totalBeneficiaries: 0, name: act.location.name };
         }
         locationsProductivity[act.location.name].count++;
-        locationsProductivity[act.location.name].totalBeneficiaries += (act.totalBeneficiaries || 0);
+        locationsProductivity[act.location.name].totalBeneficiaries += getActivityPeople(act);
       }
     });
 
@@ -460,7 +483,7 @@ export const generateInsights = (
     if (productiveLocations.length > 0 && productiveLocations[0].avg > 0) {
       insights.push({
         title: '💡 Tu Ubicación Estrella',
-        description: `Generalmente, ${productiveLocations[0].name} es donde tienes el mejor promedio de beneficiarios (${Math.round(productiveLocations[0].avg)} por actividad).`,
+        description: `Generalmente, ${productiveLocations[0].name} es donde tienes el mejor promedio de personas atendidas (${Math.round(productiveLocations[0].avg)} por actividad).`,
       });
     }
   }
@@ -486,12 +509,12 @@ export const generateInsights = (
   
   // 3. Actividad con mayor impacto
   if (userActivitiesCurrentPeriod.length > 0) {
-    const sortedByBeneficiaries = [...userActivitiesCurrentPeriod].sort((a,b) => (b.totalBeneficiaries || 0) - (a.totalBeneficiaries || 0));
+    const sortedByBeneficiaries = [...userActivitiesCurrentPeriod].sort((a,b) => getActivityPeople(b) - getActivityPeople(a));
     const topImpactActivity = sortedByBeneficiaries[0];
-    if (topImpactActivity && topImpactActivity.totalBeneficiaries > 0) {
+    if (topImpactActivity && getActivityPeople(topImpactActivity) > 0 && topImpactActivity.educationalActivity) {
        insights.push({
         title: '🚀 Actividad de Alto Impacto',
-        description: `Tu actividad de "${getActivitySubtypeLabel(topImpactActivity.educationalActivity.type, topImpactActivity.educationalActivity.subtype, topImpactActivity.contractor)}" en ${topImpactActivity.location?.name} el ${formatDate(topImpactActivity.date)} tuvo ${topImpactActivity.totalBeneficiaries} beneficiarios. ¡Gran alcance!`,
+        description: `Tu actividad de "${getActivitySubtypeLabel(topImpactActivity.educationalActivity.type, topImpactActivity.educationalActivity.subtype, topImpactActivity.contractor)}" en ${topImpactActivity.location?.name} el ${formatDate(topImpactActivity.date)} tuvo ${getActivityPeople(topImpactActivity)} personas atendidas. ¡Gran alcance!`,
       });
     }
   }

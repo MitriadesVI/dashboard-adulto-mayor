@@ -31,7 +31,7 @@ const FieldKPICards = ({ kpiData }) => {
 
       <Grid item xs={12} sm={6} md={4}>
         <DashboardCard
-          title="Beneficiarios Únicos (Educativas)"
+          title="Personas Atendidas (Educativas)"
           value={uniqueBeneficiaries !== undefined ? uniqueBeneficiaries : 'N/A'}
           icon={<PeopleIcon sx={{ fontSize: 40 }} />}
           color="success"
@@ -41,7 +41,7 @@ const FieldKPICards = ({ kpiData }) => {
 
       <Grid item xs={12} sm={6} md={4}>
         <DashboardCard
-          title="Promedio Beneficiarios / Jornada"
+          title="Promedio Personas / Jornada"
           value={avgBeneficiariesPerActivity !== undefined ? avgBeneficiariesPerActivity : 'N/A'}
           icon={<BarChartIcon sx={{ fontSize: 40 }} />}
           color="warning"

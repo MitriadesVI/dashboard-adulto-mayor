@@ -56,15 +56,15 @@ const buildAlerts = (activities, goals, contractor) => {
     });
   }
 
-  // Beneficiarios del período (sin doble conteo, igual que el KPI "Total Beneficiarios")
+  // Beneficiarios del período (sin doble conteo, igual que el KPI "Personas Atendidas")
   const totalBeneficiaries = calculateUniqueAttendance(activityList);
 
   if (totalBeneficiaries < 100 && activityList.length > 0) {
     alerts.push({
       id: 'low-beneficiaries',
       type: 'info',
-      message: 'Bajo número de beneficiarios en el período',
-      details: `${totalBeneficiaries} beneficiarios registrados`,
+      message: 'Bajo número de personas atendidas en el período',
+      details: `${totalBeneficiaries} personas atendidas registradas`,
       timestamp: now,
       icon: <PeopleIcon />
     });

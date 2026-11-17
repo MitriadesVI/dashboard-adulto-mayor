@@ -1,6 +1,7 @@
 import React from 'react';
 import { Navigate } from 'react-router-dom';
 import { Box, CircularProgress } from '@mui/material';
+import { HOME_BY_ROLE } from '../config/roles';
 
 const PrivateRoute = ({ children, allowedRoles = [], user }) => {
   // Si no hay usuario definido, mostrar loading (App.js aún está verificando auth)
@@ -19,17 +20,9 @@ const PrivateRoute = ({ children, allowedRoles = [], user }) => {
 
   // Si hay roles permitidos y el usuario no tiene ninguno de ellos
   if (allowedRoles.length > 0 && !allowedRoles.includes(user.role)) {
-    // Redirigir según el rol del usuario
-    if (user.role === 'field') {
-      return <Navigate to="/activities" replace />;
-    } else if (user.role === 'contractor-admin') {
-      return <Navigate to="/approval" replace />;
-    } else if (user.role === 'district') {
-      return <Navigate to="/dashboard" replace />;
-    } else {
-      // Si no coincide con ninguno conocido, ir a una página por defecto
-      return <Navigate to="/" replace />;
-    }
+    // Redirigir a la página de inicio de su rol
+    const home = HOME_BY_ROLE[user.role];
+    return <Navigate to={home || '/login'} replace />;
   }
 
   // Si el usuario tiene acceso, mostrar los componentes hijos

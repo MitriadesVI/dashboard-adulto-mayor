@@ -31,6 +31,7 @@ import {
 } from '@mui/icons-material';
 import authService from '../../services/authService';
 import { getContractorName } from '../../config/contractors';
+import { getRoleLabel } from '../../config/roles';
 
 const ProfilePanel = ({ user, onUserUpdate }) => {
   // Estados para cambio de contraseña
@@ -203,21 +204,13 @@ const ProfilePanel = ({ user, onUserUpdate }) => {
     setSnackbar(prev => ({ ...prev, open: false }));
   };
 
-  const getRoleText = (role, adminType) => {
-    if (role === 'contractor-admin') {
-      return adminType === 'main' ? 'Representante Principal' : 'Administrador';
-    } else if (role === 'field') {
-      return 'Personal de Campo';
-    } else if (role === 'district') {
-      return 'Distrito';
-    }
-    return role;
-  };
+  const getRoleText = (role, adminType) => getRoleLabel(role, adminType);
 
   const getRoleColor = (role) => {
     if (role === 'contractor-admin') return 'primary';
     if (role === 'field') return 'success';
     if (role === 'district') return 'secondary';
+    if (role === 'data-entry') return 'info';
     return 'default';
   };
 

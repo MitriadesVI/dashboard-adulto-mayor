@@ -11,6 +11,7 @@ import { collection, query, where, getDocs } from 'firebase/firestore';
 import { db } from '../../../firebase/config';
 import { getContractorName } from '../../../config/contractors';
 import { parseActivityDate, todayKey, dateToKey } from '../../../utils/dates';
+import { getPerformer, isRegisteredOnBehalf } from '../../../utils/attendance';
 import { workingDaysBetween } from '../../coverage/coverageUtils';
 import {
   getActivitySubtypeLabel,
@@ -26,7 +27,8 @@ const formatWorkingDays = (days) => (days === 1 ? '1 día hábil' : `${days} dí
 
 // `activities` debe traer la lista COMPLETA del contratista (todos los estados):
 // los contadores de pendientes/rechazadas dependen de ello. Educativas, nutricionales,
-// beneficiarios y estrategias cuentan solo las aprobadas.
+// personas atendidas y estrategias cuentan solo las aprobadas. Todo se agrupa por quien REALIZÓ la
+// actividad (performedBy; createdBy en actividades antiguas), no por quien la registró.
 const UsersReportTab = ({ activities, user }) => {
   const contractor = user?.contractor;
   const [users, setUsers] = useState([]);
@@ -66,8 +68,21 @@ const UsersReportTab = ({ activities, user }) => {
   const activitiesByUser = useMemo(() => {
     const map = new Map();
     (activities || []).forEach((activity) => {
-      const uid = activity?.createdBy?.uid;
+      if (!activity) return;
+      const uid = getPerformer(activity).uid;
       if (!uid || uid === 'unknown') return;
+      if (!map.has(uid)) map.set(uid, []);
+      map.get(uid).push(activity);
+    });
+    return map;
+  }, [activities]);
+
+  // Actividades cargadas (registradas) por cada usuario, para el personal de carga
+  const loadedByUser = useMemo(() => {
+    const map = new Map();
+    (activities || []).forEach((activity) => {
+      const uid = activity?.createdBy?.uid;
+      if (!uid) return;
       if (!map.has(uid)) map.set(uid, []);
       map.get(uid).push(activity);
     });
@@ -86,11 +101,19 @@ const UsersReportTab = ({ activities, user }) => {
       const hasActivities = activitiesByUser.has(uid);
       if (u.role !== 'field' && !hasActivities) return;
       if (!accountActive && !hasActivities) return;
-      roster.set(uid, { uid, name: u.name || u.email || 'Sin nombre', accountActive });
+      // Los encargados de carga no realizan actividades: se listan aparte
+      if (u.role === 'data-entry') return;
+      roster.set(uid, {
+        uid,
+        name: u.name || u.email || 'Sin nombre',
+        accountActive,
+        hasLogin: u.hasLogin !== false,
+        isField: u.role === 'field'
+      });
     });
     activitiesByUser.forEach((list, uid) => {
       if (!roster.has(uid)) {
-        roster.set(uid, { uid, name: list[0].createdBy?.name || 'Desconocido', accountActive: true });
+        roster.set(uid, { uid, name: getPerformer(list[0]).name, accountActive: true, hasLogin: true, isField: usersError });
       }
     });
 
@@ -120,8 +143,8 @@ const UsersReportTab = ({ activities, user }) => {
         if (activity.status === 'pending') stats.pendingActivities += 1;
         else if (activity.status === 'rejected') stats.rejectedActivities += 1;
 
-        // Fecha de la última vez que registró algo (día local)
-        const createdDate = parseActivityDate(activity.createdAt || activity.date);
+        // Fecha de la última actividad realizada (día local de la actividad; si falta, la de registro)
+        const createdDate = parseActivityDate(activity.dateKey || activity.date || activity.createdAt);
         if (createdDate) {
           if (!lastActivity || createdDate > lastActivity) lastActivity = createdDate;
           if (dateToKey(createdDate) >= sevenDaysAgoKey) stats.activitiesLast7Days += 1;
@@ -150,8 +173,8 @@ const UsersReportTab = ({ activities, user }) => {
         workingDaysSinceLastActivity,
         totalBeneficiaries: calculateUniqueAttendance(approved),
         isActive,
-        // Las cuentas desactivadas no generan alerta
-        needsAlert: member.accountActive && !isActive
+        // Solo alertan los profesionales de campo con cuenta activa (con o sin acceso a la app)
+        needsAlert: member.isField && member.accountActive && !isActive
       };
     });
 
@@ -171,9 +194,38 @@ const UsersReportTab = ({ activities, user }) => {
       inactiveUsers: processedUsers.filter((u) => !u.isActive).sort(byInactivityDesc),
       inactiveAlerts: processedUsers.filter((u) => u.needsAlert).sort(byInactivityDesc)
     };
-  }, [users, activitiesByUser, today]);
+  }, [users, usersError, activitiesByUser, today]);
 
   const allUsers = useMemo(() => [...activeUsers, ...inactiveUsers], [activeUsers, inactiveUsers]);
+
+  // Encargados de carga: sin métricas de desempeño, solo actividades cargadas (por createdBy)
+  const dataEntryUsers = useMemo(() => users
+    .filter((u) => u.role === 'data-entry')
+    .map((u) => {
+      const uid = u.uid || u.id;
+      const loaded = loadedByUser.get(uid) || [];
+      let lastLoaded = null;
+      loaded.forEach((activity) => {
+        const loadedDate = parseActivityDate(activity.createdAt || activity.date);
+        if (loadedDate && (!lastLoaded || loadedDate > lastLoaded)) lastLoaded = loadedDate;
+      });
+      return {
+        uid,
+        name: u.name || u.email || 'Sin nombre',
+        accountActive: u.active !== false,
+        loadedTotal: loaded.length,
+        loadedOnBehalf: loaded.filter(isRegisteredOnBehalf).length,
+        pending: loaded.filter((a) => a.status === 'pending').length,
+        rejected: loaded.filter((a) => a.status === 'rejected').length,
+        lastLoaded
+      };
+    })
+    .sort((a, b) => b.loadedTotal - a.loadedTotal || a.name.localeCompare(b.name, 'es')),
+  [users, loadedByUser]);
+
+  const renderNoLoginChip = (userData) => (userData.hasLogin === false ? (
+    <Chip label="Sin acceso a la app" size="small" variant="outlined" sx={{ mt: 0.5 }} />
+  ) : null);
 
   const getStatusChip = (userData) => {
     if (userData.isActive) {
@@ -206,7 +258,7 @@ const UsersReportTab = ({ activities, user }) => {
           sx={{ mb: 3 }}
         >
           <Typography variant="subtitle2" gutterBottom>
-            {inactiveAlerts.length} usuario(s) sin registrar actividad por más de {MAX_ACTIVE_WORKING_DAYS} días hábiles
+            {inactiveAlerts.length} profesional(es) sin realizar actividades por más de {MAX_ACTIVE_WORKING_DAYS} días hábiles
           </Typography>
           <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1, mt: 1 }}>
             {inactiveAlerts.slice(0, 5).map((alertUser) => (
@@ -241,7 +293,7 @@ const UsersReportTab = ({ activities, user }) => {
                 Usuarios Activos
               </Typography>
               <Typography variant="caption">
-                (actividad en los últimos {MAX_ACTIVE_WORKING_DAYS} días hábiles)
+                (actividad realizada en los últimos {MAX_ACTIVE_WORKING_DAYS} días hábiles)
               </Typography>
             </CardContent>
           </Card>
@@ -285,7 +337,7 @@ const UsersReportTab = ({ activities, user }) => {
           <Card>
             <CardHeader
               title="Reporte Detallado por Usuario de Campo"
-              subheader="Total, pendientes y rechazadas incluyen todos los estados; educativas, nutricionales, beneficiarios y estrategias cuentan solo actividades aprobadas."
+              subheader="Por profesional que realizó la actividad. Total, pendientes y rechazadas incluyen todos los estados; educativas, nutricionales, personas atendidas y estrategias cuentan solo actividades aprobadas."
             />
             <CardContent>
               {loadingUsers && (
@@ -305,7 +357,7 @@ const UsersReportTab = ({ activities, user }) => {
                       <TableCell align="center"><strong>Rechazadas</strong></TableCell>
                       <TableCell align="center"><strong>Educativas</strong></TableCell>
                       <TableCell align="center"><strong>Nutricionales</strong></TableCell>
-                      <TableCell align="center"><strong>Beneficiarios</strong></TableCell>
+                      <TableCell align="center"><strong>Personas atendidas</strong></TableCell>
                       <TableCell><strong>Estrategias Top</strong></TableCell>
                     </TableRow>
                   </TableHead>
@@ -330,6 +382,7 @@ const UsersReportTab = ({ activities, user }) => {
                                 Cuenta desactivada
                               </Typography>
                             )}
+                            {renderNoLoginChip(userData)}
                           </TableCell>
                           <TableCell align="center">
                             {getStatusChip(userData)}
@@ -381,7 +434,7 @@ const UsersReportTab = ({ activities, user }) => {
                               {userData.totalBeneficiaries}
                             </Typography>
                             <Typography variant="caption" color="text.secondary" display="block">
-                              (únicos)
+                              (sin doble conteo)
                             </Typography>
                           </TableCell>
                           <TableCell>
@@ -409,6 +462,54 @@ const UsersReportTab = ({ activities, user }) => {
             </CardContent>
           </Card>
         </Grid>
+
+        {dataEntryUsers.length > 0 && (
+          <Grid item xs={12}>
+            <Card>
+              <CardHeader
+                title="Encargados de Carga"
+                subheader="Registran actividades a nombre de los profesionales; no se evalúa su desempeño, solo las actividades cargadas (todos los estados)."
+              />
+              <CardContent>
+                <TableContainer component={Paper} variant="outlined" sx={{ overflowX: 'auto' }}>
+                  <Table size="small" sx={{ minWidth: 600 }}>
+                    <TableHead>
+                      <TableRow>
+                        <TableCell><strong>Usuario</strong></TableCell>
+                        <TableCell align="center"><strong>Actividades cargadas</strong></TableCell>
+                        <TableCell align="center"><strong>A nombre de otros</strong></TableCell>
+                        <TableCell align="center"><strong>Pendientes</strong></TableCell>
+                        <TableCell align="center"><strong>Rechazadas</strong></TableCell>
+                        <TableCell align="center"><strong>Última carga</strong></TableCell>
+                      </TableRow>
+                    </TableHead>
+                    <TableBody>
+                      {dataEntryUsers.map((entry) => (
+                        <TableRow key={entry.uid} hover>
+                          <TableCell>
+                            <Typography variant="subtitle2">{entry.name}</Typography>
+                            {!entry.accountActive && (
+                              <Typography variant="caption" color="text.secondary">Cuenta desactivada</Typography>
+                            )}
+                          </TableCell>
+                          <TableCell align="center">
+                            <Chip label={entry.loadedTotal} color="primary" size="small" />
+                          </TableCell>
+                          <TableCell align="center">{entry.loadedOnBehalf}</TableCell>
+                          <TableCell align="center">{entry.pending}</TableCell>
+                          <TableCell align="center">{entry.rejected}</TableCell>
+                          <TableCell align="center">
+                            {entry.lastLoaded ? formatDate(entry.lastLoaded) : '—'}
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </TableContainer>
+              </CardContent>
+            </Card>
+          </Grid>
+        )}
       </Grid>
     </Box>
   );

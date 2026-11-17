@@ -57,6 +57,9 @@ import {
   formatLocationType
 } from '../dashboard/common/helpers';
 import { getContractorName } from '../../config/contractors';
+import { canRegisterActivities, REGISTRATION_OPTIONS, DEFAULT_REGISTRATION, ROLES } from '../../config/roles';
+import contractorSettingsService from '../../services/contractorSettingsService';
+import { getPerformer, isRegisteredOnBehalf, getActivityRations } from '../../utils/attendance';
 
 // ========== LAZY LOADING PARA FIELDDASHBOARD ==========
 const FieldUserDashboard = React.lazy(() => import('../field/FieldUserDashboard'));
@@ -99,6 +102,44 @@ const ActivitiesPage = ({ user }) => {
   // ========== VALORES MEMOIZADOS ==========
   const userId = useMemo(() => user?.uid, [user?.uid]);
   const userContractor = useMemo(() => user?.contractor, [user?.contractor]);
+  const isProfessional = user?.role === ROLES.FIELD;
+
+  // Pestañas según el rol: el dashboard personal es solo para profesionales de campo
+  const mainTabs = useMemo(() => {
+    if (isProfessional) return ['activities', 'dashboard', 'profile'];
+    if (user?.role === ROLES.DATA_ENTRY) return ['activities', 'profile'];
+    return ['activities'];
+  }, [isProfessional, user?.role]);
+  const currentMainTab = mainTabs[mainTabValue] || 'activities';
+
+  // ¿Quién registra actividades en esta entidad? (lo decide el representante legal)
+  const [registration, setRegistration] = useState(null);
+  useEffect(() => {
+    let cancelled = false;
+    if (!userContractor) return undefined;
+    contractorSettingsService.getSettings(userContractor).then(settings => {
+      if (!cancelled) setRegistration(settings.registration);
+    });
+    return () => { cancelled = true; };
+  }, [userContractor]);
+  const canRegister = canRegisterActivities(user, registration || DEFAULT_REGISTRATION);
+
+  // Profesional: actividades que el encargado de carga o el representante registraron a su nombre
+  const [onBehalfActivities, setOnBehalfActivities] = useState([]);
+  useEffect(() => {
+    if (!isProfessional || !userId || mainTabValue !== 0) return undefined;
+    let cancelled = false;
+    activitiesService.getActivitiesPerformedBy(userId)
+      .then(list => {
+        if (!cancelled) setOnBehalfActivities(list.filter(activity => activity.createdBy?.uid !== userId));
+      })
+      .catch(() => { if (!cancelled) setOnBehalfActivities([]); });
+    return () => { cancelled = true; };
+  }, [isProfessional, userId, mainTabValue]);
+  const registrantsText = REGISTRATION_OPTIONS
+    .filter(option => (registration || DEFAULT_REGISTRATION)[option.key] !== false)
+    .map(option => option.label.toLowerCase())
+    .join('; ');
   
   // ========== FUNCIONES CORE (SIN DEPENDENCIAS PROBLEMÁTICAS) ==========
   const checkPendingActivities = useCallback(() => {
@@ -405,10 +446,12 @@ const ActivitiesPage = ({ user }) => {
           <Grid container spacing={2} alignItems="center" sx={{ mb: 3 }}>
             <Grid item xs>
               <Typography variant="h5" component="h2">
-                Gestión de Actividades
+                {isProfessional ? 'Gestión de Actividades' : 'Actividades registradas'}
               </Typography>
               <Typography variant="body2" color="text.secondary">
-                Registra, consulta y gestiona tus actividades
+                {isProfessional
+                  ? 'Registra, consulta y gestiona tus actividades'
+                  : 'Registra las actividades indicando qué profesional las realizó'}
               </Typography>
             </Grid>
             <Grid item>
@@ -431,11 +474,44 @@ const ActivitiesPage = ({ user }) => {
                   setSelectedActivity(null);
                   setFormVisible(true);
                 }}
+                disabled={!registration || !canRegister}
               >
                 Nueva Actividad
               </Button>
             </Grid>
           </Grid>
+
+          {registration && !canRegister && (
+            <Alert severity="info" sx={{ mb: 3 }}>
+              {getContractorName(userContractor)} definió quién registra las actividades: {registrantsText}.
+              {isProfessional
+                ? ' Tus actividades las registra otra persona a tu nombre y aparecen en tu dashboard.'
+                : ' Si necesitas registrar, pide al representante legal que lo habilite.'}
+            </Alert>
+          )}
+
+          {onBehalfActivities.length > 0 && (
+            <Paper variant="outlined" sx={{ p: 2, mb: 3 }}>
+              <Typography variant="subtitle1" gutterBottom>
+                Registradas a tu nombre por otra persona ({onBehalfActivities.length})
+              </Typography>
+              <List dense disablePadding>
+                {onBehalfActivities.slice(0, 10).map(activity => (
+                  <ListItem key={activity.id} disableGutters secondaryAction={getStatusChip(activity.status)}>
+                    <ListItemText
+                      primary={`${formatDate(activity.date)} · ${activity.location?.name || 'Sin ubicación'} · ${getActivityDisplayLabel(activity)}`}
+                      secondary={`Registró: ${activity.createdBy?.name || 'Desconocido'}`}
+                    />
+                  </ListItem>
+                ))}
+              </List>
+              {onBehalfActivities.length > 10 && (
+                <Typography variant="caption" color="text.secondary">
+                  Se muestran las 10 más recientes. Todas cuentan en tu dashboard.
+                </Typography>
+              )}
+            </Paper>
+          )}
 
           {offline && (
             <Alert severity="warning" sx={{ mb: 3 }}>
@@ -485,14 +561,16 @@ const ActivitiesPage = ({ user }) => {
                   ? 'No se encontraron actividades.'
                   : 'No hay actividades registradas.'}
               </Typography>
-              <Button
-                variant="contained"
-                startIcon={<AddIcon />}
-                onClick={() => setFormVisible(true)}
-                sx={{ mt: 2 }}
-              >
-                Registrar Actividad
-              </Button>
+              {canRegister && (
+                <Button
+                  variant="contained"
+                  startIcon={<AddIcon />}
+                  onClick={() => setFormVisible(true)}
+                  sx={{ mt: 2 }}
+                >
+                  Registrar Actividad
+                </Button>
+              )}
             </Paper>
           ) : (
             <Paper elevation={2}>
@@ -560,7 +638,17 @@ const ActivitiesPage = ({ user }) => {
                             <Typography variant="body2" component="span" color="text.secondary">
                               {' - '}{activity.location?.name || 'Sin ubicación'}
                               {', '}{getTotalBeneficiaries(activity)} beneficiarios
+                              {activity.nutritionDelivery?.included && getActivityRations(activity) !== getTotalBeneficiaries(activity)
+                                ? `, ${getActivityRations(activity)} raciones`
+                                : ''}
                             </Typography>
+                            {isRegisteredOnBehalf(activity) && (
+                              <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
+                                {activity.createdBy?.uid === userId
+                                  ? `Realizada por: ${getPerformer(activity).name}`
+                                  : `Registrada a tu nombre por: ${activity.createdBy?.name || 'otra persona'}`}
+                              </Typography>
+                            )}
                             {activity.status === 'rejected' && activity.rejectionReason && (
                               <Typography variant="body2" color="error" sx={{ mt: 0.5 }}>
                                 Motivo: {activity.rejectionReason}
@@ -609,7 +697,7 @@ const ActivitiesPage = ({ user }) => {
         <Grid container spacing={2} alignItems="center" sx={{ mb: 3 }}>
           <Grid item xs>
             <Typography variant="h4" component="h1">
-              Panel de Usuario
+              {isProfessional ? 'Panel de Usuario' : 'Registro de Actividades'}
             </Typography>
             <Typography variant="subtitle1" color="text.secondary">
               {getContractorName(userContractor)} - {user?.name}
@@ -627,25 +715,29 @@ const ActivitiesPage = ({ user }) => {
           >
             <Tab
               icon={<AssignmentIcon />}
-              label="Mis Actividades"
+              label={isProfessional ? 'Mis Actividades' : 'Actividades'}
               iconPosition="start"
             />
-            <Tab
-              icon={<DashboardIcon />}
-              label="Mi Dashboard"
-              iconPosition="start"
-            />
-            <Tab
-              icon={<PersonIcon />}
-              label="Mi Perfil"
-              iconPosition="start"
-            />
+            {mainTabs.includes('dashboard') && (
+              <Tab
+                icon={<DashboardIcon />}
+                label="Mi Dashboard"
+                iconPosition="start"
+              />
+            )}
+            {mainTabs.includes('profile') && (
+              <Tab
+                icon={<PersonIcon />}
+                label="Mi Perfil"
+                iconPosition="start"
+              />
+            )}
           </Tabs>
         </Paper>
 
-        {mainTabValue === 0 && activitiesContent}
-        {mainTabValue === 1 && fieldDashboardContent}
-        {mainTabValue === 2 && <ProfilePanel user={user} />}
+        {currentMainTab === 'activities' && activitiesContent}
+        {currentMainTab === 'dashboard' && fieldDashboardContent}
+        {currentMainTab === 'profile' && <ProfilePanel user={user} />}
 
       </Box>
 
@@ -759,6 +851,9 @@ const ActivitiesPage = ({ user }) => {
                   <Card variant="outlined">
                     <CardContent>
                       <Typography variant="h6" gutterBottom>Estado</Typography>
+                      <Typography variant="body2" sx={{ mb: 1 }}>
+                        <strong>Realizada por:</strong> {getPerformer(selectedActivity).name}
+                      </Typography>
                       <Typography variant="body2" sx={{ mb: 1 }}>
                         <strong>Registrado por:</strong> {selectedActivity.createdBy?.name || 'Desconocido'}
                       </Typography>

@@ -61,7 +61,11 @@ const buildActivityFields = (activityData) => ({
   nutritionDelivery: activityData.nutritionDelivery,
   generalObservations: activityData.generalObservations || null,
   schedule: activityData.schedule,
-  driveLink: activityData.driveLink || null
+  driveLink: activityData.driveLink || null,
+  // Profesional que realizó la actividad (puede ser distinto de quien la registró)
+  performedBy: activityData.performedBy?.uid
+    ? { uid: activityData.performedBy.uid, name: activityData.performedBy.name || '' }
+    : { uid: activityData.createdBy?.uid, name: activityData.createdBy?.name || '' }
 });
 
 const activitiesService = {
@@ -135,6 +139,19 @@ const activitiesService = {
       return true;
     } catch (error) {
       console.error('Error al reenviar actividad corregida:', error);
+      throw error;
+    }
+  },
+
+  // Actividades realizadas por un profesional (incluye las que registró un encargado
+  // o el representante a su nombre). Solo filtro de igualdad: no requiere índice compuesto.
+  getActivitiesPerformedBy: async (uid) => {
+    try {
+      const q = query(collection(db, 'activities'), where('performedBy.uid', '==', uid));
+      const querySnapshot = await getDocs(q);
+      return sortByCreatedAtDesc(querySnapshot.docs.map(normalizeActivity));
+    } catch (error) {
+      console.error('Error al obtener actividades realizadas por el profesional:', error);
       throw error;
     }
   },

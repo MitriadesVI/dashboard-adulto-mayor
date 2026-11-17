@@ -28,7 +28,7 @@ const ModalityEfficiencyDashboard = ({ activities, title = "Análisis de Eficien
   // en el mismo eje. Las demás métricas (actividades por día, por ubicación) se muestran en las tarjetas.
   const comparisonData = [
     {
-      name: 'Beneficiarios por jornada',
+      name: 'Personas atendidas por jornada',
       'Centros Fijos': metrics.centers.averageBeneficiaries || 0,
       'Parques/Espacios': metrics.parks.averageBeneficiaries || 0
     }
@@ -105,7 +105,7 @@ const ModalityEfficiencyDashboard = ({ activities, title = "Análisis de Eficien
                 {metrics.centers.totalBeneficiaries + metrics.parks.totalBeneficiaries}
               </Typography>
               <Typography variant="body2" color="success.contrastText">
-                Beneficiarios (Act. Educativas)
+                Personas Atendidas (Act. Educativas)
               </Typography>
             </Box>
           </Grid>
@@ -117,7 +117,7 @@ const ModalityEfficiencyDashboard = ({ activities, title = "Análisis de Eficien
                 {overallAverageAttendance}
               </Typography>
               <Typography variant="body2" color="warning.contrastText">
-                Beneficiarios por Jornada
+                Personas por Jornada
               </Typography>
             </Box>
           </Grid>
@@ -282,10 +282,10 @@ const ModalityEfficiencyDashboard = ({ activities, title = "Análisis de Eficien
 
               <Box sx={{ mt: 2 }}>
                 <Typography variant="body2" color="text.secondary">
-                  Promedio de beneficiarios por jornada: <strong>{metrics.parks.averageBeneficiaries}</strong>
+                  Promedio de personas atendidas por jornada: <strong>{metrics.parks.averageBeneficiaries}</strong>
                 </Typography>
                 <Typography variant="body2" color="text.secondary">
-                  Total beneficiarios: <strong>{metrics.parks.totalBeneficiaries}</strong>
+                  Personas atendidas: <strong>{metrics.parks.totalBeneficiaries}</strong>
                 </Typography>
               </Box>
             </Box>

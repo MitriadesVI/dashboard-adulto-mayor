@@ -19,6 +19,7 @@ import {
 
 // Servicios
 import activitiesService from '../../services/activitiesService'; 
+import { getPerformer } from '../../utils/attendance';
 
 // Helpers específicos del personal de campo
 import {
@@ -32,6 +33,7 @@ import {
   fetchUserActivitiesForPeriodAndComparison, 
   getDateRangeForPeriod, 
   filterByDateRange,
+  mergeUserActivities,
 } from './utils/fieldHelpers';
 
 // Componentes del dashboard de campo
@@ -179,7 +181,7 @@ const FieldUserDashboard = ({ user }) => {
     
     try {
       // ========== CARGA OPTIMIZADA DE ACTIVIDADES DEL USUARIO ==========
-      const userActivities = [];
+      const createdByUser = [];
       let lastDoc = null;
       let hasMore = true;
       let pageCount = 0;
@@ -188,7 +190,7 @@ const FieldUserDashboard = ({ user }) => {
       while (hasMore && pageCount < MAX_PAGES) {
         const response = await activitiesService.getActivitiesByUser(userId, null, 50, lastDoc);
         if (response?.activities?.length > 0) {
-          userActivities.push(...response.activities);
+          createdByUser.push(...response.activities);
           lastDoc = response.lastVisible;
           hasMore = response.activities.length === 50 && response.lastVisible;
         } else {
@@ -197,6 +199,12 @@ const FieldUserDashboard = ({ user }) => {
         pageCount++;
       }
       
+      // Actividades que realizó el profesional aunque las haya registrado otra persona (encargado de carga, representante)
+      const performedByUser = await activitiesService.getActivitiesPerformedBy(userId);
+
+      // Unión sin duplicados; solo las que él realizó (getPerformer) cuentan para sus estadísticas
+      const userActivities = mergeUserActivities(createdByUser, performedByUser, userId);
+
       // ========== CARGA LIMITADA DE ACTIVIDADES COMPARATIVAS ==========
       const systemActivities = await activitiesService.getApprovedActivities({
         contractor: userContractor
@@ -208,7 +216,8 @@ const FieldUserDashboard = ({ user }) => {
       const relevantActivities = filterByDateRange(
         systemActivities.filter(act => 
           act.educationalActivity?.included === true &&
-          act.createdBy?.role === 'field'
+          (act.createdBy?.role === 'field' || !!act.performedBy?.uid) &&
+          getPerformer(act).uid !== userId
         ),
         comparisonStart,
         comparisonEnd

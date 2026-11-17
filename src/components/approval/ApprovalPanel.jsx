@@ -1,6 +1,6 @@
 // src/components/approval/ApprovalPanel.jsx
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   Paper, 
   Typography, 
@@ -26,8 +26,10 @@ import {
   Tab,
   Tabs,
   Card,
-  CardContent
+  CardContent,
+  Tooltip
 } from '@mui/material';
+import WarningAmberIcon from '@mui/icons-material/WarningAmber';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import CancelIcon from '@mui/icons-material/Cancel';
 import VisibilityIcon from '@mui/icons-material/Visibility';
@@ -52,6 +54,23 @@ import {
   formatLocationType
 } from '../dashboard/common/helpers';
 import { getContractorName } from '../../config/contractors';
+import {
+  attendanceGroupKey,
+  getActivityRations,
+  getPerformer,
+  isRegisteredOnBehalf,
+  summarizeAttendance
+} from '../../utils/attendance';
+
+// Clase de actividad para detectar duplicados: mismo tipo + subtipo educativo, o solo alimentación
+const getActivityKind = (activity) => {
+  if (activity?.educationalActivity?.included) {
+    return `edu:${activity.educationalActivity.type || ''}:${activity.educationalActivity.subtype || ''}`;
+  }
+  return activity?.nutritionDelivery?.included ? 'nutrition-only' : 'other';
+};
+
+const STATUS_LABELS = { approved: 'aprobada', pending: 'pendiente', rejected: 'rechazada' };
 
 // Los errores que lanza activitiesService (Error simple con mensaje en español, p. ej.
 // "La actividad ya fue revisada por otra persona") se muestran tal cual. Los errores de
@@ -123,38 +142,29 @@ const ApprovalPanel = ({ user, onUserUpdate }) => {
     }
   }, [mainTabValue, loadActivities, loadAllActivities]);
 
-  // FUNCIÓN SIMPLE: Obtener métricas de aprobación del admin actual
-  const getApprovalMetrics = () => {
-    if (!allActivities.length || !user.uid) {
-      return {
-        totalApproved: 0,
-        totalRejected: 0,
-        approvedByType: { nutrition: 0, physical: 0, psychosocial: 0 },
-        totalBeneficiariesApproved: 0
-      };
-    }
+  // Métricas de aprobación del admin actual. Las personas atendidas no suman totalBeneficiaries
+  // sin más: se aplica la regla de jornada (máximo por sede + fecha + jornada).
+  const approvalMetrics = useMemo(() => {
+    const empty = {
+      totalApproved: 0,
+      totalRejected: 0,
+      approvedByType: { nutrition: 0, physical: 0, psychosocial: 0 },
+      totalBeneficiariesApproved: 0
+    };
+    if (!allActivities.length || !user?.uid) return empty;
 
-    const approvedActivities = allActivities.filter(a => 
+    const approvedActivities = allActivities.filter(a =>
       a.status === 'approved' && a.approvedBy?.uid === user.uid
     );
-    
-    const rejectedActivities = allActivities.filter(a => 
+    const rejectedActivities = allActivities.filter(a =>
       a.status === 'rejected' && a.approvedBy?.uid === user.uid
     );
 
     const approvedByType = { nutrition: 0, physical: 0, psychosocial: 0 };
-    let totalBeneficiariesApproved = 0;
-
     approvedActivities.forEach(activity => {
-      // Contar beneficiarios
-      totalBeneficiariesApproved += Number(activity.totalBeneficiaries) || 0;
-      
-      // Contar por tipo de actividad educativa
       if (activity.educationalActivity?.included) {
         const type = activity.educationalActivity.type;
-        if (approvedByType[type] !== undefined) {
-          approvedByType[type] += 1;
-        }
+        if (approvedByType[type] !== undefined) approvedByType[type] += 1;
       }
     });
 
@@ -162,9 +172,37 @@ const ApprovalPanel = ({ user, onUserUpdate }) => {
       totalApproved: approvedActivities.length,
       totalRejected: rejectedActivities.length,
       approvedByType,
-      totalBeneficiariesApproved
+      totalBeneficiariesApproved: summarizeAttendance(approvedActivities).people
     };
-  };
+  }, [allActivities, user?.uid]);
+
+  // Posibles duplicados: pendiente con la misma sede + fecha + jornada y la misma clase de actividad
+  // que otro registro no rechazado del contratista (id de la pendiente -> el otro registro)
+  const duplicatesById = useMemo(() => {
+    const result = new Map();
+    if (!activities.length || !allActivities.length) return result;
+
+    const byGroup = new Map();
+    allActivities.forEach(other => {
+      if (!other || other.status === 'rejected') return;
+      const key = attendanceGroupKey(other);
+      if (!byGroup.has(key)) byGroup.set(key, []);
+      byGroup.get(key).push(other);
+    });
+
+    activities.forEach(activity => {
+      const kind = getActivityKind(activity);
+      const match = (byGroup.get(attendanceGroupKey(activity)) || [])
+        .find(other => other.id !== activity.id && getActivityKind(other) === kind);
+      if (match) result.set(activity.id, match);
+    });
+    return result;
+  }, [activities, allActivities]);
+
+  const getDuplicateTooltip = (other) =>
+    `Misma sede, fecha, jornada y tipo que otra actividad ${STATUS_LABELS[other.status] || 'registrada'}: ` +
+    `${formatDate(other.date)}, registrada por ${other.createdBy?.name || 'usuario desconocido'}` +
+    (isRegisteredOnBehalf(other) ? ` (realizada por ${getPerformer(other).name})` : '');
 
   const getActivityDisplayLabel = (activity) => {
     if (!activity) return 'Actividad';
@@ -312,9 +350,6 @@ const ApprovalPanel = ({ user, onUserUpdate }) => {
     );
   }
 
-  // Obtener métricas de aprobación
-  const approvalMetrics = getApprovalMetrics();
-
   return (
     <Box sx={{pb: 4}}>
       <Paper elevation={3} sx={{ p: 1, mb: 3, position: 'sticky', top: 64, zIndex: 100 }}>
@@ -328,7 +363,7 @@ const ApprovalPanel = ({ user, onUserUpdate }) => {
           textColor="primary"
         >
           <Tab label="Aprobación de Actividades" />
-          <Tab label="Usuarios" />
+          <Tab label="Equipo" />
           <Tab label="Dashboard Contratista" />
           <Tab label="Perfil" />
         </Tabs>
@@ -385,8 +420,11 @@ const ApprovalPanel = ({ user, onUserUpdate }) => {
                   <Typography variant="h6" color="secondary.main">
                     {approvalMetrics.totalBeneficiariesApproved}
                   </Typography>
-                  <Typography variant="caption" color="text.secondary">
-                    Beneficiarios
+                  <Typography variant="caption" color="text.secondary" display="block">
+                    Personas atendidas
+                  </Typography>
+                  <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.65rem' }}>
+                    sin doble conteo por jornada
                   </Typography>
                 </CardContent>
               </Card>
@@ -443,6 +481,17 @@ const ApprovalPanel = ({ user, onUserUpdate }) => {
                             <Typography variant="subtitle1">
                               {getActivityDisplayLabel(activity)}
                             </Typography>
+                            {duplicatesById.has(activity.id) && (
+                              <Tooltip title={getDuplicateTooltip(duplicatesById.get(activity.id))}>
+                                <Chip
+                                  size="small"
+                                  color="warning"
+                                  icon={<WarningAmberIcon />}
+                                  label="Posible duplicado"
+                                  sx={{ ml: 1 }}
+                                />
+                              </Tooltip>
+                            )}
                             {activity.educationalActivity?.included && (
                               <Chip 
                                 size="small" 
@@ -461,17 +510,19 @@ const ApprovalPanel = ({ user, onUserUpdate }) => {
                           <React.Fragment>
                             <Typography variant="body2" component="span">
                               {activity.location?.name} ({formatLocationType(activity.location?.type)}) - 
-                              {formatDate(activity.date)} - {getTotalBeneficiaries(activity)} beneficiarios - 
+                              {formatDate(activity.date)} - {getTotalBeneficiaries(activity)} personas
+                              {activity.nutritionDelivery?.included && ` - ${getActivityRations(activity)} raciones`} - 
                               Jornada: {formatSchedule(activity.schedule)}
                             </Typography>
                             <Box sx={{ display: 'flex', alignItems: 'center', mt: 1 }}>
                               <Avatar 
                                 sx={{ width: 24, height: 24, mr: 1, fontSize: '0.8rem' }}
                               >
-                                {activity.createdBy?.name ? activity.createdBy.name.charAt(0) : '?'}
+                                {getPerformer(activity).name.charAt(0)}
                               </Avatar>
                               <Typography variant="caption">
-                                Registrado por: {activity.createdBy?.name || 'Usuario desconocido'}
+                                Realizada por: {getPerformer(activity).name}
+                                {isRegisteredOnBehalf(activity) && ` · Registrada por: ${activity.createdBy?.name || 'Usuario desconocido'}`}
                               </Typography>
                             </Box>
                           </React.Fragment>
@@ -587,14 +638,28 @@ const ApprovalPanel = ({ user, onUserUpdate }) => {
                         </Grid>
                         <Grid item xs={12} md={6}>
                           <Typography variant="body2">
-                            <strong>Total Beneficiarios:</strong> {getTotalBeneficiaries(selectedActivity)}
+                            <strong>Personas que participaron:</strong> {getTotalBeneficiaries(selectedActivity)}
                           </Typography>
                         </Grid>
-                        <Grid item xs={12}>
+                        <Grid item xs={12} md={6}>
                           <Typography variant="body2">
-                            <strong>Registrado por:</strong> {selectedActivity.createdBy?.name || 'Usuario desconocido'}
+                            <strong>Realizada por:</strong> {getPerformer(selectedActivity).name}
                           </Typography>
                         </Grid>
+                        {isRegisteredOnBehalf(selectedActivity) && (
+                          <Grid item xs={12} md={6}>
+                            <Typography variant="body2">
+                              <strong>Registrada por:</strong> {selectedActivity.createdBy?.name || 'Usuario desconocido'}
+                            </Typography>
+                          </Grid>
+                        )}
+                        {duplicatesById.has(selectedActivity.id) && (
+                          <Grid item xs={12}>
+                            <Alert severity="warning" icon={<WarningAmberIcon />}>
+                              Posible duplicado. {getDuplicateTooltip(duplicatesById.get(selectedActivity.id))}
+                            </Alert>
+                          </Grid>
+                        )}
                       </Grid>
                     </CardContent>
                   </Card>
@@ -650,7 +715,7 @@ const ApprovalPanel = ({ user, onUserUpdate }) => {
                         </Typography>
                         
                         <Typography variant="body2" sx={{ mb: 1 }}>
-                          <strong>Beneficiarios atendidos:</strong> {getTotalBeneficiaries(selectedActivity)}
+                          <strong>Raciones/meriendas entregadas:</strong> {getActivityRations(selectedActivity)}
                         </Typography>
                         
                         {selectedActivity.nutritionDelivery.description && (

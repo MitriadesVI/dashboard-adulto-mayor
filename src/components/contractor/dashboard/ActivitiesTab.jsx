@@ -163,7 +163,7 @@ const ActivitiesTab = ({ activities, goals, user }) => {
                               ) : (
                                 <Chip 
                                   icon={<RestaurantIcon />} 
-                                  label={strategy.isBeneficiaries ? "Beneficiarios" : "Entregas"} 
+                                  label={strategy.isBeneficiaries ? "Raciones entregadas" : "Entregas"} 
                                   color="secondary" 
                                   size="small" 
                                 />

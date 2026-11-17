@@ -12,6 +12,7 @@ import {
 } from 'firebase/firestore';
 import { db } from '../firebase/config';
 import { getActivityYear } from '../utils/dates';
+import { getActivityRations } from '../utils/attendance';
 
 const goalsService = {
   // Establecer metas para un contratista y año
@@ -187,7 +188,8 @@ const goalsService = {
         
         // CONTAR ENTREGAS NUTRICIONALES (por beneficiarios)
         if (activity.nutritionDelivery && activity.nutritionDelivery.included) {
-          const beneficiaries = Number(activity.totalBeneficiaries) || 0;
+          // Raciones/meriendas entregadas (si no se registraron aparte, igual a los beneficiarios)
+          const beneficiaries = getActivityRations(activity);
           
           // Determinar tipo de ubicación
           const locationType = activity.location?.type?.toLowerCase() || '';

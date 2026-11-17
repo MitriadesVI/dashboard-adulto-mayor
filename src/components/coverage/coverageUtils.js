@@ -7,6 +7,7 @@
 // tienen, por nombre normalizado (sin tildes, minúsculas, espacios colapsados).
 
 import { parseActivityDate, toDateKey, dateToKey, daysBetween, todayKey } from '../../utils/dates';
+import { groupAttendance } from '../../utils/attendance';
 import { getLocationType, formatSchedule } from '../dashboard/common/helpers';
 
 export const COVERAGE_STATUS = {
@@ -95,20 +96,12 @@ const normalizeJornada = (schedule) => {
   return label === 'J1' || label === 'J2' ? label : null;
 };
 
-// Beneficiarios únicos de las actividades de UNA sede: por fecha + jornada se toma el
-// máximo (evita doble conteo educativa + ración), y se suman las jornadas.
-// Misma regla que calculateUniqueAttendance, pero sin ruido en consola ni agrupar por nombre.
-const uniqueAttendance = (activities) => {
-  const groups = new Map();
-  activities.forEach((activity) => {
-    const key = `${activity.dateKey || toDateKey(activity.date)}|${activity.schedule || 'general'}`;
-    const beneficiaries = Number(activity.totalBeneficiaries) || 0;
-    if (!groups.has(key) || groups.get(key) < beneficiaries) groups.set(key, beneficiaries);
-  });
-  let total = 0;
-  groups.forEach((value) => { total += value; });
-  return total;
-};
+// Personas atendidas en las actividades de UNA sede (regla de utils/attendance): por fecha + jornada
+// el máximo entre asistentes y raciones, y se suman las jornadas. Todas las actividades se fuerzan a
+// la misma sede para que mezclar registros con y sin locationId no duplique el conteo.
+const uniqueAttendance = (activities) =>
+  groupAttendance(activities.map((activity) => ({ ...activity, locationId: 'sede' })))
+    .reduce((total, group) => total + group.people, 0);
 
 /**
  * Resumen de una lista de filas de cobertura.

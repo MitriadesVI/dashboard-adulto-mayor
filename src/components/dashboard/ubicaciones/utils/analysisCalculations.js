@@ -1,4 +1,5 @@
 import { getLocationType, getIsoWeek, getIsoWeekKey, formatDate } from '../../common/helpers';
+import { getActivityPeople, getActivityRations, normalizeJornada } from '../../../../utils/attendance';
 import { parseActivityDate, toDateKey, todayKey, daysBetween } from '../../../../utils/dates';
 
 export const performDetailedAnalysis = (locationActivities, locationInfo) => {
@@ -12,7 +13,8 @@ export const performDetailedAnalysis = (locationActivities, locationInfo) => {
     // Fecha 'YYYY-MM-DD' en hora local; sin fecha válida no se puede agrupar por día
     const dateKey = activity.dateKey || toDateKey(activity.date);
     if (!dateKey) return;
-    const schedule = activity.schedule || 'general';
+    // Jornada normalizada: J1 | J2 | UNICA (parques)
+    const schedule = normalizeJornada(activity.schedule);
     const groupKey = `${dateKey}-${schedule}`;
     
     if (!dayGroupMap.has(groupKey)) {
@@ -31,9 +33,8 @@ export const performDetailedAnalysis = (locationActivities, locationInfo) => {
     const group = dayGroupMap.get(groupKey);
     group.activities.push(activity);
     
-    // Tomar el MÁXIMO de beneficiarios para el promedio
-    const beneficiaries = Number(activity.totalBeneficiaries) || 0;
-    group.maxBeneficiaries = Math.max(group.maxBeneficiaries, beneficiaries);
+    // Personas atendidas de la jornada: máximo entre asistentes y raciones de todos los registros
+    group.maxBeneficiaries = Math.max(group.maxBeneficiaries, getActivityPeople(activity));
     
     // Registrar componentes
     if (activity.educationalActivity && activity.educationalActivity.included) {
@@ -43,7 +44,7 @@ export const performDetailedAnalysis = (locationActivities, locationInfo) => {
     
     if (activity.nutritionDelivery && activity.nutritionDelivery.included) {
       group.hasNutrition = true;
-      group.nutritionRations += beneficiaries;
+      group.nutritionRations += getActivityRations(activity);
       group.components.add('nutrition');
     }
   });
@@ -61,7 +62,7 @@ export const performDetailedAnalysis = (locationActivities, locationInfo) => {
   
   const totalRations = locationActivities
     .filter(a => a.nutritionDelivery && a.nutritionDelivery.included)
-    .reduce((sum, a) => sum + (Number(a.totalBeneficiaries) || 0), 0);
+    .reduce((sum, a) => sum + getActivityRations(a), 0);
 
   // Promedio general de asistencia (máximo por día+jornada)
   const totalMaxBeneficiaries = dayGroups.reduce((sum, group) => sum + group.maxBeneficiaries, 0);
@@ -124,7 +125,7 @@ export const analyzeComponents = (activities) => {
     
     if (activity.nutritionDelivery && activity.nutritionDelivery.included) {
       components.nutrition.deliveries++;
-      components.nutrition.rations += Number(activity.totalBeneficiaries) || 0;
+      components.nutrition.rations += getActivityRations(activity);
       
       const deliveryType = activity.nutritionDelivery.type || 'general';
       components.nutrition.strategies[deliveryType] = (components.nutrition.strategies[deliveryType] || 0) + 1;
