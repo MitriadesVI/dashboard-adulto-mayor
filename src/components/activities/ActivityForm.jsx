@@ -28,52 +28,49 @@ import * as Yup from 'yup';
 import activitiesService from '../../services/activitiesService';
 import localStorageService from '../../services/localStorageService';
 import locationsService from '../../services/locationsService';
+import { getActivityTypeLabel, getActivitySubtypeLabel } from '../dashboard/common/helpers';
+import { getContractorName } from '../../config/contractors';
+import { todayKey, toDateKey } from '../../utils/dates';
 
 // ========== FUNCIONES EXTERNAS (CRÍTICO) ==========
+// Las etiquetas dependen del contratista (ver src/config/contractors.js)
+const ACTIVITY_SUBTYPES = {
+  nutrition: ['workshop'],
+  physical: ['prevention', 'therapeutic', 'rumba', 'walking'],
+  psychosocial: ['mental', 'cognitive', 'abuse', 'arts', 'intergenerational']
+};
+
+const MAX_BENEFICIARIES = 500;
+
 const getActivityTypes = (contractor) => {
   if (!contractor) return [];
-  return [
-    { value: 'nutrition', label: contractor === 'CUC' ? 'Educación Nutricional' : 'Salud Nutricional' },
-    { value: 'physical', label: contractor === 'CUC' ? 'Educación en Salud Física' : 'Salud Física' },
-    { value: 'psychosocial', label: contractor === 'CUC' ? 'Educación Psicosocial' : 'Salud Psicosocial' },
-  ];
+  return Object.keys(ACTIVITY_SUBTYPES).map(type => ({
+    value: type,
+    label: getActivityTypeLabel(type, contractor)
+  }));
 };
 
 const getSubtypes = (type, contractor) => {
-  if (!contractor || !type) return [];
-  if (type === 'nutrition') {
-    return [
-      { value: 'workshop', label: contractor === 'CUC' ? 'Taller educativo del cuidado nutricional' : 'Jornada de promoción de la salud nutricional' }
-    ];
-  } else if (type === 'physical') {
-    return [
-      { value: 'prevention', label: 'Charlas de prevención de enfermedad' },
-      { value: 'therapeutic', label: 'Actividad física terapéutica' },
-      { value: 'rumba', label: 'Rumbaterapia y ejercicios dirigidos' },
-      { value: 'walking', label: 'Club de caminantes' }
-    ];
-  } else if (type === 'psychosocial') {
-    return [
-      { value: 'mental', label: 'Jornadas/talleres en salud mental' },
-      { value: 'cognitive', label: 'Jornadas/talleres cognitivos' },
-      { value: 'abuse', label: 'Talleres en prevención al maltrato' },
-      { value: 'arts', label: 'Talleres en artes y oficios' },
-      { value: 'intergenerational', label: 'Encuentros intergeneracionales' }
-    ];
-  }
-  return [];
+  if (!contractor || !type || !ACTIVITY_SUBTYPES[type]) return [];
+  return ACTIVITY_SUBTYPES[type].map(subtype => ({
+    value: subtype,
+    label: getActivitySubtypeLabel(type, subtype, contractor)
+  }));
 };
 
 // ✅ CLAVE 1: SCHEMA DE VALIDACIÓN ESTÁTICO
 const createValidationSchema = () => Yup.object({
-  date: Yup.date().required('Fecha requerida'),
+  date: Yup.string()
+    .required('Fecha requerida')
+    .test('not-future', 'La fecha no puede ser futura', value => !value || value <= todayKey()),
   locationName: Yup.string().required('Nombre de la ubicación requerido'),
   locationType: Yup.string().required('Tipo de ubicación requerido'),
   schedule: Yup.string().required('Jornada requerida'),
   beneficiaries: Yup.number()
     .required('Número de beneficiarios requerido')
     .positive('Debe ser un número positivo')
-    .integer('Debe ser un número entero'),
+    .integer('Debe ser un número entero')
+    .max(MAX_BENEFICIARIES, `Verifique el número: máximo ${MAX_BENEFICIARIES} beneficiarios por actividad`),
   driveLink: Yup.string()
     .url('Debe ser una URL válida')
     .nullable()
@@ -105,7 +102,7 @@ const createValidationSchema = () => Yup.object({
 
 // ✅ CLAVE 2: VALORES INICIALES ESTÁTICOS
 const createInitialValues = (initialData) => ({
-  date: initialData?.date || new Date().toISOString().split('T')[0],
+  date: (initialData?.date && toDateKey(initialData.date)) || todayKey(),
   locationName: initialData?.location?.name || '',
   locationType: initialData?.location?.type || '',
   schedule: initialData?.schedule || 'J1',
@@ -275,6 +272,7 @@ const BasicInfoStep = React.memo(({ formik, filteredLocations, loadingLocations 
               error={formik.touched.date && Boolean(formik.errors.date)}
               helperText={formik.touched.date && formik.errors.date}
               InputLabelProps={{ shrink: true }}
+              inputProps={{ max: todayKey() }}
               sx={{ '& input': { fontSize: '1.1rem' } }}
             />
           </CardContent>
@@ -302,7 +300,9 @@ const BasicInfoStep = React.memo(({ formik, filteredLocations, loadingLocations 
               autoComplete="off"
               inputProps={{ 
                 inputMode: 'numeric',
-                pattern: '[0-9]*'
+                pattern: '[0-9]*',
+                min: 1,
+                max: MAX_BENEFICIARIES
               }}
             />
           </CardContent>
@@ -742,6 +742,10 @@ const ActivityForm = ({ user, onSuccess, initialData, onCancel }) => {
   const validationSchema = useMemo(() => createValidationSchema(), []);
   const initialValues = useMemo(() => createInitialValues(initialData), [initialData]);
 
+  // Corregir una actividad rechazada la actualiza y la devuelve a revisión;
+  // duplicar (initialData sin id) crea una actividad nueva.
+  const isResubmission = Boolean(initialData?.id && initialData?.status === 'rejected');
+
   const formik = useFormik({
     initialValues,
     validationSchema,
@@ -750,14 +754,17 @@ const ActivityForm = ({ user, onSuccess, initialData, onCancel }) => {
       if (!user) return;
       setLoading(true);
       try {
-        const defaultLocation = { lat: 10.963889, lng: -74.796387 };
+        const selectedLocation = locations.find(loc =>
+          loc?.name === values.locationName && loc?.type === values.locationType
+        );
         const activityData = {
           date: values.date,
           contractor: user.contractor,
+          locationId: selectedLocation?.id || null,
           location: {
             name: values.locationName,
             type: values.locationType,
-            coordinates: defaultLocation
+            coordinates: selectedLocation?.coordinates || null
           },
           totalBeneficiaries: Number(values.beneficiaries),
           educationalActivity: {
@@ -783,16 +790,24 @@ const ActivityForm = ({ user, onSuccess, initialData, onCancel }) => {
           }
         };
 
-        if (!localStorageService.isOnline()) {
+        let successMessage;
+        if (isResubmission) {
+          if (!localStorageService.isOnline()) {
+            setSnackbar({ open: true, message: 'Necesita conexión para reenviar una actividad corregida.', severity: 'warning' });
+            return;
+          }
+          await activitiesService.resubmitActivity(initialData.id, activityData, initialData);
+          successMessage = 'Actividad corregida y enviada de nuevo a revisión';
+        } else if (!localStorageService.isOnline()) {
           localStorageService.savePendingActivity(activityData);
-          setSnackbar({ open: true, message: 'Actividad guardada localmente. Se sincronizará.', severity: 'info' });
+          successMessage = 'Sin conexión: actividad guardada en este dispositivo. Se enviará automáticamente al recuperar la conexión.';
         } else {
           await activitiesService.createActivity(activityData);
-          setSnackbar({ open: true, message: 'Actividad registrada correctamente', severity: 'success' });
+          successMessage = 'Actividad registrada correctamente';
         }
         formik.resetForm();
         localStorageService.clearFormDraft();
-        if (onSuccess) onSuccess();
+        if (onSuccess) onSuccess(successMessage);
       } catch (error) {
         console.error('Error al registrar actividad:', error);
         setSnackbar({ open: true, message: 'Error al registrar actividad. Verifique los datos o la conexión.', severity: 'error' });
@@ -805,8 +820,9 @@ const ActivityForm = ({ user, onSuccess, initialData, onCancel }) => {
   // ✅ CLAVE 5: MEMOIZAR UBICACIONES FILTRADAS
   const filteredLocations = useMemo(() => {
     const locationType = formik.values.locationType;
-    if (!locationType) return locations;
-    return locations.filter(loc => loc?.type === locationType);
+    const activeLocations = locations.filter(loc => loc?.active !== false);
+    if (!locationType) return activeLocations;
+    return activeLocations.filter(loc => loc?.type === locationType);
   }, [locations, formik.values.locationType]);
 
   // ✅ CLAVE 6: CARGAR UBICACIONES SIN DEPENDENCIAS PROBLEMÁTICAS
@@ -826,6 +842,17 @@ const ActivityForm = ({ user, onSuccess, initialData, onCancel }) => {
     };
     loadLocations();
   }, [user?.contractor]);
+
+  // Recuperar el borrador guardado (solo para actividades nuevas, una vez al abrir)
+  useEffect(() => {
+    if (initialData) return;
+    const draft = localStorageService.getFormDraft();
+    if (draft?.formValues) {
+      formik.setValues({ ...createInitialValues(null), ...draft.formValues }, false);
+      setSnackbar({ open: true, message: 'Se recuperó el borrador guardado.', severity: 'info' });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // ✅ CLAVE 7: HANDLERS OPTIMIZADOS SIN DEPENDENCIAS PROBLEMÁTICAS
   const canProceedToNextStep = useCallback(() => {
@@ -937,10 +964,10 @@ const ActivityForm = ({ user, onSuccess, initialData, onCancel }) => {
           )}
           <Box sx={{ flexGrow: 1 }}>
             <Typography variant="h6">
-              {initialData ? 'Editar' : 'Nueva'} Actividad
+              {isResubmission ? 'Corregir' : 'Nueva'} Actividad
             </Typography>
             <Typography variant="caption" sx={{ opacity: 0.8 }}>
-              {user.contractor} - {user.name}
+              {getContractorName(user.contractor)} - {user.name}
             </Typography>
           </Box>
         </Toolbar>
@@ -950,6 +977,12 @@ const ActivityForm = ({ user, onSuccess, initialData, onCancel }) => {
           sx={{ height: 4 }}
         />
       </AppBar>
+
+      {isResubmission && initialData.rejectionReason && (
+        <Alert severity="error" sx={{ mt: 2 }}>
+          <strong>Motivo del rechazo:</strong> {initialData.rejectionReason}
+        </Alert>
+      )}
 
       {/* Stepper */}
       <Paper sx={{ mb: 2 }}>
@@ -1054,7 +1087,7 @@ const ActivityForm = ({ user, onSuccess, initialData, onCancel }) => {
                   fontSize: { xs: '0.8rem', sm: '0.875rem' }
                 }}
               >
-                {loading ? '' : (initialData ? 'Actualizar' : 'Enviar')}
+                {loading ? '' : (isResubmission ? 'Reenviar' : 'Enviar')}
               </Button>
             ) : (
               <Button

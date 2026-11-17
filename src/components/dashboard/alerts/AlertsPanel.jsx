@@ -1,6 +1,6 @@
 // src/components/dashboard/alerts/AlertsPanel.jsx
 
-import React, { useState, useEffect } from 'react';
+import React, { useMemo } from 'react';
 import {
   Card, CardHeader, CardContent, List, ListItem, 
   ListItemIcon, ListItemText, ListItemButton, Chip,
@@ -9,97 +9,79 @@ import {
 import WarningIcon from '@mui/icons-material/Warning';
 import PeopleIcon from '@mui/icons-material/People';
 import TrendingDownIcon from '@mui/icons-material/TrendingDown';
+import {
+  calculateUniqueAttendance,
+  getActivityTypeLabel,
+  getEducationalActivityCount
+} from '../common/helpers';
 
-// Este componente sería expandido para obtener datos de API en tiempo real
+const GOAL_COMPONENTS = ['nutrition', 'physical', 'psychosocial'];
+
+// Genera las alertas a partir de los datos recibidos (se recalculan solo cuando cambian)
+const buildAlerts = (activities, goals, contractor) => {
+  const alerts = [];
+  const now = new Date();
+  const activityList = Array.isArray(activities) ? activities : [];
+
+  // Baja actividad: solo actividades educativas (las entregas de alimentos no cuentan como actividades)
+  const educationalCount = getEducationalActivityCount(activityList);
+  if (educationalCount < 5) {
+    alerts.push({
+      id: 'low-activity',
+      type: 'warning',
+      message: 'Baja actividad detectada en el período seleccionado',
+      details: `Solo ${educationalCount} actividades registradas`,
+      timestamp: now,
+      icon: <TrendingDownIcon />
+    });
+  }
+
+  // Alertas basadas en metas si seleccionamos un contratista específico y tiene metas configuradas
+  if (contractor && contractor !== 'all' && goals?.hasGoals) {
+    GOAL_COMPONENTS.forEach(category => {
+      // Solo componentes con al menos una estrategia con meta (el promedio ya excluye las que no tienen)
+      const hasGoals = Object.values(goals.goals?.[category] || {}).some(value => value > 0);
+      const average = goals.averages?.[category] || 0;
+
+      if (hasGoals && average < 30) {
+        alerts.push({
+          id: `low-goal-${category}`,
+          type: 'error',
+          message: `Meta de ${getActivityTypeLabel(category, contractor)} muy por debajo del objetivo`,
+          details: `${Math.round(average)}% de cumplimiento`,
+          timestamp: now,
+          icon: <WarningIcon />
+        });
+      }
+    });
+  }
+
+  // Beneficiarios del período (sin doble conteo, igual que el KPI "Total Beneficiarios")
+  const totalBeneficiaries = calculateUniqueAttendance(activityList);
+
+  if (totalBeneficiaries < 100 && activityList.length > 0) {
+    alerts.push({
+      id: 'low-beneficiaries',
+      type: 'info',
+      message: 'Bajo número de beneficiarios en el período',
+      details: `${totalBeneficiaries} beneficiarios registrados`,
+      timestamp: now,
+      icon: <PeopleIcon />
+    });
+  }
+
+  return alerts;
+};
+
 const AlertsPanel = ({ 
   activities,
   goals,
-  contractor = 'all',
-  refreshInterval = 300000 // 5 minutos
+  contractor = 'all'
 }) => {
-  const [alerts, setAlerts] = useState([]);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    // Simular carga inicial de alertas
-    const loadAlerts = () => {
-      setLoading(true);
-      
-      // Aquí implementarías la lógica real de alertas basada en tus datos
-      setTimeout(() => {
-        const generatedAlerts = [];
-        
-        // Alertas de ejemplo basadas en datos reales
-        if (activities?.length < 5) {
-          generatedAlerts.push({
-            id: 'low-activity',
-            type: 'warning',
-            message: 'Baja actividad detectada en el período seleccionado',
-            details: `Solo ${activities?.length || 0} actividades registradas`,
-            timestamp: new Date(),
-            icon: <TrendingDownIcon />
-          });
-        }
-        
-        // Alertas basadas en metas si seleccionamos un contratista específico
-        if (contractor !== 'all' && goals) {
-          // Revisar si alguna meta está muy por debajo
-          const categories = ['nutrition', 'physical', 'psychosocial'];
-          categories.forEach(category => {
-            if (goals.averages[category] < 30) {
-              generatedAlerts.push({
-                id: `low-goal-${category}`,
-                type: 'error',
-                message: `Meta de ${category === 'nutrition' ? 'Nutrición' : 
-                          category === 'physical' ? 'Actividad Física' : 'Psicosocial'} 
-                          muy por debajo del objetivo`,
-                details: `${Math.round(goals.averages[category])}% de cumplimiento`,
-                timestamp: new Date(),
-                icon: <WarningIcon />
-              });
-            }
-          });
-        }
-        
-        // Alerta de ejemplo para beneficiarios
-        const totalBeneficiaries = activities?.reduce(
-          (sum, activity) => sum + (Number(activity?.beneficiaries) || 0), 0
-        ) || 0;
-        
-        if (totalBeneficiaries < 100 && activities?.length > 0) {
-          generatedAlerts.push({
-            id: 'low-beneficiaries',
-            type: 'info',
-            message: 'Bajo número de beneficiarios en el período',
-            details: `${totalBeneficiaries} beneficiarios registrados`,
-            timestamp: new Date(),
-            icon: <PeopleIcon />
-          });
-        }
-        
-        setAlerts(generatedAlerts);
-        setLoading(false);
-      }, 1000);
-    };
-    
-    loadAlerts();
-    
-    // Establecer intervalo para refrescar alertas
-    const interval = setInterval(loadAlerts, refreshInterval);
-    
-    return () => clearInterval(interval);
-  }, [activities, goals, contractor, refreshInterval]);
-
-  if (loading) {
-    return (
-      <Card>
-        <CardHeader title="Alertas en Tiempo Real" />
-        <CardContent>
-          <Typography align="center">Cargando alertas...</Typography>
-        </CardContent>
-      </Card>
-    );
-  }
+  const alerts = useMemo(
+    () => buildAlerts(activities, goals, contractor),
+    [activities, goals, contractor]
+  );
 
   return (
     <Card>

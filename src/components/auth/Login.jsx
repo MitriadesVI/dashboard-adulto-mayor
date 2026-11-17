@@ -22,84 +22,6 @@ const Login = ({ onLoginSuccess }) => { // ← RECIBIR LA PROP
   const [error, setError] = useState('');
   const navigate = useNavigate();
 
-  // Función para crear un usuario administrador (SOLO PARA DESARROLLO)
-  const createAdminUser = async () => {
-    setLoading(true);
-    setError('');
-    try {
-      const email = "admin@ejemplo.com"; // Cambia esto al correo que prefieras
-      const password = "Admin1234!"; // Cambia esto a una contraseña segura
-      
-      const userData = {
-        name: "Administrador",
-        role: "district",
-        contractor: "DISTRITO",
-        active: true
-      };
-      
-      await authService.registerUser(email, password, userData);
-      
-      alert(`Usuario administrador creado con éxito:\nEmail: ${email}\nContraseña: ${password}\n\nGuarda esta información antes de continuar.`);
-    } catch (error) {
-      console.error('Error al crear usuario administrador:', error);
-      setError('Error al crear usuario administrador: ' + (error.message || error));
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  // Función para crear un usuario representante legal de contratista
-  const createContractorAdmin = async () => {
-    setLoading(true);
-    setError('');
-    try {
-      const email = "cuc@ejemplo.com";
-      const password = "Cuc1234!";
-      
-      const userData = {
-        name: "Representante CUC",
-        role: "contractor-admin",
-        contractor: "CUC",
-        active: true
-      };
-      
-      await authService.registerUser(email, password, userData);
-      
-      alert(`Usuario representante creado con éxito:\nEmail: ${email}\nContraseña: ${password}\n\nGuarda esta información antes de continuar.`);
-    } catch (error) {
-      console.error('Error al crear usuario representante:', error);
-      setError('Error al crear usuario representante: ' + (error.message || error));
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  // Función para crear un usuario de campo
-  const createFieldUser = async () => {
-    setLoading(true);
-    setError('');
-    try {
-      const email = "campo@ejemplo.com";
-      const password = "Campo1234!";
-      
-      const userData = {
-        name: "Usuario de Campo",
-        role: "field",
-        contractor: "CUC",
-        active: true
-      };
-      
-      await authService.registerUser(email, password, userData);
-      
-      alert(`Usuario de campo creado con éxito:\nEmail: ${email}\nContraseña: ${password}\n\nGuarda esta información antes de continuar.`);
-    } catch (error) {
-      console.error('Error al crear usuario de campo:', error);
-      setError('Error al crear usuario de campo: ' + (error.message || error));
-    } finally {
-      setLoading(false);
-    }
-  };
-
   const formik = useFormik({
     initialValues: {
       email: '',
@@ -148,10 +70,16 @@ const Login = ({ onLoginSuccess }) => { // ← RECIBIR LA PROP
         console.error('❌ Error de inicio de sesión:', error);
         
         // Manejar diferentes tipos de errores de autenticación de Firebase
-        if (error.code === 'auth/user-not-found' || error.code === 'auth/wrong-password') {
+        if (['auth/user-not-found', 'auth/wrong-password', 'auth/invalid-credential', 'auth/invalid-login-credentials', 'auth/invalid-email'].includes(error.code)) {
           setError('Correo electrónico o contraseña incorrectos');
         } else if (error.code === 'auth/too-many-requests') {
           setError('Demasiados intentos fallidos. Intente de nuevo más tarde');
+        } else if (error.code === 'auth/user-disabled' || error.code === 'app/user-disabled') {
+          setError('Su cuenta está desactivada. Contacte al administrador.');
+        } else if (error.code === 'app/no-profile') {
+          setError(error.message);
+        } else if (error.code === 'auth/network-request-failed') {
+          setError('Sin conexión a internet. Verifique su conexión e intente de nuevo.');
         } else {
           setError('Error al iniciar sesión. Por favor, intente de nuevo.');
         }
@@ -259,53 +187,6 @@ const Login = ({ onLoginSuccess }) => { // ← RECIBIR LA PROP
                 </Button>
               </Grid>
               
-              {/* Botones para crear usuarios (solo para desarrollo) */}
-              <Grid item xs={12}>
-                <Typography variant="subtitle2" align="center" gutterBottom>
-                  Herramientas de Desarrollo (Remover en Producción)
-                </Typography>
-                <Grid container spacing={2}>
-                  <Grid item xs={4}>
-                    <Button
-                      type="button"
-                      fullWidth
-                      variant="outlined"
-                      color="primary"
-                      onClick={createAdminUser}
-                      disabled={loading}
-                      size="small"
-                    >
-                      Crear Admin
-                    </Button>
-                  </Grid>
-                  <Grid item xs={4}>
-                    <Button
-                      type="button"
-                      fullWidth
-                      variant="outlined"
-                      color="secondary"
-                      onClick={createContractorAdmin}
-                      disabled={loading}
-                      size="small"
-                    >
-                      Crear Representante
-                    </Button>
-                  </Grid>
-                  <Grid item xs={4}>
-                    <Button
-                      type="button"
-                      fullWidth
-                      variant="outlined"
-                      color="info"
-                      onClick={createFieldUser}
-                      disabled={loading}
-                      size="small"
-                    >
-                      Crear Usuario Campo
-                    </Button>
-                  </Grid>
-                </Grid>
-              </Grid>
             </Grid>
           </form>
           

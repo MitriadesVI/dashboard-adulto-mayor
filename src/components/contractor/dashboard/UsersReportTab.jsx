@@ -1,157 +1,225 @@
 // src/components/contractor/dashboard/UsersReportTab.jsx
 
-import React from 'react';
-import { Grid, Card, CardHeader, CardContent, Typography, Box, Paper, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, Chip, Alert } from '@mui/material';
+import React, { useState, useEffect, useMemo } from 'react';
+import { Grid, Card, CardHeader, CardContent, Typography, Box, Paper, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, Chip, Alert, CircularProgress } from '@mui/material';
 import WarningIcon from '@mui/icons-material/Warning';
 import TrendingUpIcon from '@mui/icons-material/TrendingUp';
 import TrendingDownIcon from '@mui/icons-material/TrendingDown';
 import PersonIcon from '@mui/icons-material/Person';
+import { collection, query, where, getDocs } from 'firebase/firestore';
 
-// CORRECCIÓN: Ruta correcta para helpers (cambio de ../../../ a ../../)
-import { 
+import { db } from '../../../firebase/config';
+import { getContractorName } from '../../../config/contractors';
+import { parseActivityDate, todayKey, dateToKey } from '../../../utils/dates';
+import { workingDaysBetween } from '../../coverage/coverageUtils';
+import {
   getActivitySubtypeLabel,
-  calculateUniqueAttendanceByUser  // NUEVA FUNCIÓN IMPORTADA
+  calculateUniqueAttendance,
+  formatDate
 } from '../../dashboard/common/helpers';
 
+// Un usuario está activo si registró actividad en los últimos 2 días hábiles (L–V);
+// con más de 2 días hábiles sin registrar se genera una alerta.
+const MAX_ACTIVE_WORKING_DAYS = 2;
+
+const formatWorkingDays = (days) => (days === 1 ? '1 día hábil' : `${days} días hábiles`);
+
+// `activities` debe traer la lista COMPLETA del contratista (todos los estados):
+// los contadores de pendientes/rechazadas dependen de ello. Educativas, nutricionales,
+// beneficiarios y estrategias cuentan solo las aprobadas.
 const UsersReportTab = ({ activities, user }) => {
-  const getUserActivityStats = () => {
-    if (!activities.length) return { activeUsers: [], inactiveUsers: [], inactiveAlerts: [] };
-    
-    const userStats = {};
-    const today = new Date();
-    
-    const isWeekday = (date) => {
-      const dayOfWeek = date.getDay();
-      return dayOfWeek >= 1 && dayOfWeek <= 5;
-    };
-    
-    let weekdaysInLastTwoDays = 0;
-    for (let i = 0; i < 2; i++) {
-      const checkDate = new Date();
-      checkDate.setDate(today.getDate() - i);
-      if (isWeekday(checkDate)) {
-        weekdaysInLastTwoDays++;
-      }
+  const contractor = user?.contractor;
+  const [users, setUsers] = useState([]);
+  const [loadingUsers, setLoadingUsers] = useState(true);
+  const [usersError, setUsersError] = useState(false);
+
+  // Usuarios del contratista (para mostrar también a quienes no han registrado nada)
+  useEffect(() => {
+    if (!contractor) {
+      setLoadingUsers(false);
+      return undefined;
     }
-    
-    activities.forEach(activity => {
-      if (!activity.createdBy?.name) return;
-      
-      const userName = activity.createdBy.name;
-      const userUid = activity.createdBy.uid;
-      
-      if (!userStats[userUid]) {
-        userStats[userUid] = {
-          name: userName,
-          uid: userUid,
-          totalActivities: 0,
-          approvedActivities: 0,
-          rejectedActivities: 0,
-          pendingActivities: 0,
-          lastActivityDate: null,
-          activitiesLast7Days: 0,
-          educationalActivities: 0,
-          nutritionDeliveries: 0,
-          totalBeneficiaries: 0,  // Se calculará al final usando función corregida
-          strategies: {}
-        };
+
+    let cancelled = false;
+    const loadUsers = async () => {
+      setLoadingUsers(true);
+      setUsersError(false);
+      try {
+        const snapshot = await getDocs(query(collection(db, 'users'), where('contractor', '==', contractor)));
+        if (!cancelled) setUsers(snapshot.docs.map((docSnap) => ({ id: docSnap.id, ...docSnap.data() })));
+      } catch (error) {
+        console.error('Error al cargar usuarios del contratista:', error);
+        if (!cancelled) {
+          setUsers([]);
+          setUsersError(true);
+        }
+      } finally {
+        if (!cancelled) setLoadingUsers(false);
       }
-      
-      const createdDate = new Date(activity.createdAt);
-      
-      userStats[userUid].totalActivities += 1;
-      
-      // ========== CORRECCIÓN: NO sumar directamente totalBeneficiaries aquí ==========
-      // ANTES: userStats[userUid].totalBeneficiaries += (Number(activity.totalBeneficiaries) || 0);
-      // DESPUÉS: Se calculará al final usando calculateUniqueAttendanceByUser()
-      
-      if (activity.status === 'approved') userStats[userUid].approvedActivities += 1;
-      else if (activity.status === 'rejected') userStats[userUid].rejectedActivities += 1;
-      else if (activity.status === 'pending') userStats[userUid].pendingActivities += 1;
-      
-      if (activity.educationalActivity?.included) {
-        userStats[userUid].educationalActivities += 1;
-        
-        const type = activity.educationalActivity.type;
-        const subtype = activity.educationalActivity.subtype;
-        const strategyLabel = getActivitySubtypeLabel(type, subtype, activity.contractor);
-        
-        userStats[userUid].strategies[strategyLabel] = (userStats[userUid].strategies[strategyLabel] || 0) + 1;
-      }
-      
-      if (activity.nutritionDelivery?.included) {
-        userStats[userUid].nutritionDeliveries += 1;
-      }
-      
-      if (!userStats[userUid].lastActivityDate || createdDate > userStats[userUid].lastActivityDate) {
-        userStats[userUid].lastActivityDate = createdDate;
-      }
-      
-      const sevenDaysAgo = new Date();
-      sevenDaysAgo.setDate(today.getDate() - 7);
-      if (createdDate >= sevenDaysAgo) {
-        userStats[userUid].activitiesLast7Days += 1;
+    };
+
+    loadUsers();
+    return () => { cancelled = true; };
+  }, [contractor]);
+
+  // Agrupar las actividades por usuario una sola vez
+  const activitiesByUser = useMemo(() => {
+    const map = new Map();
+    (activities || []).forEach((activity) => {
+      const uid = activity?.createdBy?.uid;
+      if (!uid || uid === 'unknown') return;
+      if (!map.has(uid)) map.set(uid, []);
+      map.get(uid).push(activity);
+    });
+    return map;
+  }, [activities]);
+
+  const today = todayKey();
+
+  const { activeUsers, inactiveUsers, inactiveAlerts } = useMemo(() => {
+    // Lista de usuarios: personal de campo del contratista + cualquiera que haya registrado actividades
+    const roster = new Map();
+    users.forEach((u) => {
+      const uid = u.uid || u.id;
+      if (!uid) return;
+      const accountActive = u.active !== false;
+      const hasActivities = activitiesByUser.has(uid);
+      if (u.role !== 'field' && !hasActivities) return;
+      if (!accountActive && !hasActivities) return;
+      roster.set(uid, { uid, name: u.name || u.email || 'Sin nombre', accountActive });
+    });
+    activitiesByUser.forEach((list, uid) => {
+      if (!roster.has(uid)) {
+        roster.set(uid, { uid, name: list[0].createdBy?.name || 'Desconocido', accountActive: true });
       }
     });
-    
-    const processedUsers = Object.values(userStats).map(user => {
-      const daysSinceLastActivity = user.lastActivityDate 
-        ? Math.floor((today - user.lastActivityDate) / (1000 * 60 * 60 * 24))
-        : 999;
-      
-      // ========== CORRECCIÓN: Calcular beneficiarios únicos por usuario ==========
-      const uniqueBeneficiaries = calculateUniqueAttendanceByUser(activities, user.uid);
-      
+
+    const todayDate = parseActivityDate(today);
+    const sevenDaysAgo = new Date(todayDate);
+    sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+    const sevenDaysAgoKey = dateToKey(sevenDaysAgo);
+
+    const processedUsers = Array.from(roster.values()).map((member) => {
+      const userActivities = activitiesByUser.get(member.uid) || [];
+      const approved = userActivities.filter((a) => a.status === 'approved');
+
+      const stats = {
+        ...member,
+        totalActivities: userActivities.length,
+        approvedActivities: approved.length,
+        pendingActivities: 0,
+        rejectedActivities: 0,
+        educationalActivities: 0,
+        nutritionDeliveries: 0,
+        activitiesLast7Days: 0,
+        strategies: {}
+      };
+      let lastActivity = null;
+
+      userActivities.forEach((activity) => {
+        if (activity.status === 'pending') stats.pendingActivities += 1;
+        else if (activity.status === 'rejected') stats.rejectedActivities += 1;
+
+        // Fecha de la última vez que registró algo (día local)
+        const createdDate = parseActivityDate(activity.createdAt || activity.date);
+        if (createdDate) {
+          if (!lastActivity || createdDate > lastActivity) lastActivity = createdDate;
+          if (dateToKey(createdDate) >= sevenDaysAgoKey) stats.activitiesLast7Days += 1;
+        }
+      });
+
+      approved.forEach((activity) => {
+        if (activity.educationalActivity?.included) {
+          stats.educationalActivities += 1;
+          const { type, subtype } = activity.educationalActivity;
+          const strategyLabel = getActivitySubtypeLabel(type, subtype, activity.contractor);
+          stats.strategies[strategyLabel] = (stats.strategies[strategyLabel] || 0) + 1;
+        }
+        if (activity.nutritionDelivery?.included) {
+          stats.nutritionDeliveries += 1;
+        }
+      });
+
+      // Días HÁBILES (L–V) desde la última actividad; null si nunca ha registrado
+      const workingDaysSinceLastActivity = lastActivity ? workingDaysBetween(lastActivity, todayDate) : null;
+      const isActive = workingDaysSinceLastActivity !== null && workingDaysSinceLastActivity <= MAX_ACTIVE_WORKING_DAYS;
+
       return {
-        ...user,
-        totalBeneficiaries: uniqueBeneficiaries,  // VALOR CORREGIDO
-        daysSinceLastActivity,
-        isActive: daysSinceLastActivity <= 2 && user.activitiesLast7Days > 0,
-        needsAlert: weekdaysInLastTwoDays > 0 && daysSinceLastActivity >= 2
+        ...stats,
+        lastActivityDate: lastActivity,
+        workingDaysSinceLastActivity,
+        totalBeneficiaries: calculateUniqueAttendance(approved),
+        isActive,
+        // Las cuentas desactivadas no generan alerta
+        needsAlert: member.accountActive && !isActive
       };
     });
-    
-    const activeUsers = processedUsers
-      .filter(u => u.isActive)
-      .sort((a, b) => b.activitiesLast7Days - a.activitiesLast7Days);
-    
-    const inactiveUsers = processedUsers
-      .filter(u => !u.isActive)
-      .sort((a, b) => a.daysSinceLastActivity - b.daysSinceLastActivity);
-    
-    const inactiveAlerts = processedUsers
-      .filter(u => u.needsAlert)
-      .sort((a, b) => b.daysSinceLastActivity - a.daysSinceLastActivity);
-    
-    return { activeUsers, inactiveUsers, inactiveAlerts };
-  };
 
-  const { activeUsers, inactiveUsers, inactiveAlerts } = getUserActivityStats();
-  const allUsers = [...activeUsers, ...inactiveUsers];
+    // Más inactivo primero (quien nunca ha registrado, al inicio), luego por nombre
+    const inactivityOf = (u) => (u.workingDaysSinceLastActivity === null ? Infinity : u.workingDaysSinceLastActivity);
+    const byInactivityDesc = (a, b) => {
+      const aDays = inactivityOf(a);
+      const bDays = inactivityOf(b);
+      if (aDays !== bDays) return aDays > bDays ? -1 : 1;
+      return a.name.localeCompare(b.name, 'es');
+    };
+
+    return {
+      activeUsers: processedUsers
+        .filter((u) => u.isActive)
+        .sort((a, b) => b.activitiesLast7Days - a.activitiesLast7Days || a.name.localeCompare(b.name, 'es')),
+      inactiveUsers: processedUsers.filter((u) => !u.isActive).sort(byInactivityDesc),
+      inactiveAlerts: processedUsers.filter((u) => u.needsAlert).sort(byInactivityDesc)
+    };
+  }, [users, activitiesByUser, today]);
+
+  const allUsers = useMemo(() => [...activeUsers, ...inactiveUsers], [activeUsers, inactiveUsers]);
+
+  const getStatusChip = (userData) => {
+    if (userData.isActive) {
+      return <Chip label="Activo" color="success" size="small" />;
+    }
+    if (userData.workingDaysSinceLastActivity === null) {
+      return <Chip label="Sin actividad" color={userData.accountActive ? 'warning' : 'default'} size="small" />;
+    }
+    return (
+      <Chip
+        label={`${formatWorkingDays(userData.workingDaysSinceLastActivity)} inactivo`}
+        color={userData.needsAlert ? 'error' : 'default'}
+        size="small"
+      />
+    );
+  };
 
   return (
     <Box>
+      {usersError && (
+        <Alert severity="info" sx={{ mb: 3 }}>
+          No se pudo cargar la lista de usuarios; se muestran solo quienes han registrado actividades.
+        </Alert>
+      )}
+
       {inactiveAlerts.length > 0 && (
-        <Alert 
-          severity="warning" 
+        <Alert
+          severity="warning"
           icon={<WarningIcon />}
           sx={{ mb: 3 }}
         >
           <Typography variant="subtitle2" gutterBottom>
-            ⚠️ {inactiveAlerts.length} usuario(s) inactivo(s) por más de 2 días laborables
+            {inactiveAlerts.length} usuario(s) sin registrar actividad por más de {MAX_ACTIVE_WORKING_DAYS} días hábiles
           </Typography>
           <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1, mt: 1 }}>
-            {inactiveAlerts.slice(0, 5).map((user, index) => (
-              <Chip 
-                key={index}
-                label={`${user.name} (${user.daysSinceLastActivity}d)`}
+            {inactiveAlerts.slice(0, 5).map((alertUser) => (
+              <Chip
+                key={alertUser.uid}
+                label={`${alertUser.name} (${alertUser.workingDaysSinceLastActivity === null ? 'sin actividad' : `${alertUser.workingDaysSinceLastActivity} d. háb.`})`}
                 color="warning"
                 size="small"
                 variant="outlined"
               />
             ))}
             {inactiveAlerts.length > 5 && (
-              <Chip 
+              <Chip
                 label={`+${inactiveAlerts.length - 5} más`}
                 color="warning"
                 size="small"
@@ -173,12 +241,12 @@ const UsersReportTab = ({ activities, user }) => {
                 Usuarios Activos
               </Typography>
               <Typography variant="caption">
-                (actividad en últimos 2 días)
+                (actividad en los últimos {MAX_ACTIVE_WORKING_DAYS} días hábiles)
               </Typography>
             </CardContent>
           </Card>
         </Grid>
-        
+
         <Grid item xs={12} md={4}>
           <Card>
             <CardContent sx={{ textAlign: 'center' }}>
@@ -190,12 +258,12 @@ const UsersReportTab = ({ activities, user }) => {
                 Usuarios Inactivos
               </Typography>
               <Typography variant="caption">
-                (sin actividad reciente)
+                (incluye quienes aún no registran actividades)
               </Typography>
             </CardContent>
           </Card>
         </Grid>
-        
+
         <Grid item xs={12} md={4}>
           <Card>
             <CardContent sx={{ textAlign: 'center' }}>
@@ -207,7 +275,7 @@ const UsersReportTab = ({ activities, user }) => {
                 Total Usuarios
               </Typography>
               <Typography variant="caption">
-                ({user.contractor})
+                ({getContractorName(contractor)})
               </Typography>
             </CardContent>
           </Card>
@@ -215,15 +283,26 @@ const UsersReportTab = ({ activities, user }) => {
 
         <Grid item xs={12}>
           <Card>
-            <CardHeader title="Reporte Detallado por Usuario de Campo" />
+            <CardHeader
+              title="Reporte Detallado por Usuario de Campo"
+              subheader="Total, pendientes y rechazadas incluyen todos los estados; educativas, nutricionales, beneficiarios y estrategias cuentan solo actividades aprobadas."
+            />
             <CardContent>
-              <TableContainer component={Paper} variant="outlined">
-                <Table>
+              {loadingUsers && (
+                <Box sx={{ display: 'flex', justifyContent: 'center', py: 2 }}>
+                  <CircularProgress size={24} />
+                </Box>
+              )}
+              <TableContainer component={Paper} variant="outlined" sx={{ overflowX: 'auto' }}>
+                <Table size="small" sx={{ minWidth: 900 }}>
                   <TableHead>
                     <TableRow>
-                      <TableCell><strong>Usuario</strong></TableCell>
+                      <TableCell sx={{ position: 'sticky', left: 0, zIndex: 3, bgcolor: 'background.paper' }}><strong>Usuario</strong></TableCell>
                       <TableCell align="center"><strong>Estado</strong></TableCell>
+                      <TableCell align="center"><strong>Última actividad</strong></TableCell>
                       <TableCell align="center"><strong>Total</strong></TableCell>
+                      <TableCell align="center"><strong>Pendientes</strong></TableCell>
+                      <TableCell align="center"><strong>Rechazadas</strong></TableCell>
                       <TableCell align="center"><strong>Educativas</strong></TableCell>
                       <TableCell align="center"><strong>Nutricionales</strong></TableCell>
                       <TableCell align="center"><strong>Beneficiarios</strong></TableCell>
@@ -233,46 +312,68 @@ const UsersReportTab = ({ activities, user }) => {
                   <TableBody>
                     {allUsers.length === 0 ? (
                       <TableRow>
-                        <TableCell colSpan={7} align="center">
+                        <TableCell colSpan={10} align="center">
                           <Typography variant="body2" color="text.secondary">
                             No hay datos de usuarios para mostrar
                           </Typography>
                         </TableCell>
                       </TableRow>
                     ) : (
-                      allUsers.map((userData, index) => (
-                        <TableRow key={index}>
-                          <TableCell>
+                      allUsers.map((userData) => (
+                        <TableRow key={userData.uid} hover>
+                          <TableCell sx={{ position: 'sticky', left: 0, zIndex: 1, bgcolor: 'background.paper', minWidth: 140 }}>
                             <Typography variant="subtitle2">
                               {userData.name}
                             </Typography>
+                            {!userData.accountActive && (
+                              <Typography variant="caption" color="text.secondary">
+                                Cuenta desactivada
+                              </Typography>
+                            )}
                           </TableCell>
                           <TableCell align="center">
-                            <Chip 
-                              label={userData.isActive ? 'Activo' : `${userData.daysSinceLastActivity}d inactivo`}
-                              color={userData.isActive ? 'success' : userData.needsAlert ? 'error' : 'warning'}
+                            {getStatusChip(userData)}
+                          </TableCell>
+                          <TableCell align="center">
+                            <Typography variant="body2">
+                              {userData.lastActivityDate ? formatDate(userData.lastActivityDate) : '—'}
+                            </Typography>
+                          </TableCell>
+                          <TableCell align="center">
+                            <Chip
+                              label={userData.totalActivities}
+                              color="primary"
                               size="small"
                             />
                           </TableCell>
                           <TableCell align="center">
-                            <Chip 
-                              label={userData.totalActivities} 
-                              color="primary" 
-                              size="small" 
+                            <Chip
+                              label={userData.pendingActivities}
+                              color={userData.pendingActivities > 0 ? 'warning' : 'default'}
+                              variant={userData.pendingActivities > 0 ? 'filled' : 'outlined'}
+                              size="small"
                             />
                           </TableCell>
                           <TableCell align="center">
-                            <Chip 
-                              label={userData.educationalActivities} 
-                              color="success" 
-                              size="small" 
+                            <Chip
+                              label={userData.rejectedActivities}
+                              color={userData.rejectedActivities > 0 ? 'error' : 'default'}
+                              variant={userData.rejectedActivities > 0 ? 'filled' : 'outlined'}
+                              size="small"
                             />
                           </TableCell>
                           <TableCell align="center">
-                            <Chip 
-                              label={userData.nutritionDeliveries} 
-                              color="secondary" 
-                              size="small" 
+                            <Chip
+                              label={userData.educationalActivities}
+                              color="success"
+                              size="small"
+                            />
+                          </TableCell>
+                          <TableCell align="center">
+                            <Chip
+                              label={userData.nutritionDeliveries}
+                              color="secondary"
+                              size="small"
                             />
                           </TableCell>
                           <TableCell align="center">
@@ -286,10 +387,10 @@ const UsersReportTab = ({ activities, user }) => {
                           <TableCell>
                             <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
                               {Object.entries(userData.strategies)
-                                .sort(([,a], [,b]) => b - a)
+                                .sort(([, a], [, b]) => b - a)
                                 .slice(0, 3)
                                 .map(([strategy, count]) => (
-                                  <Chip 
+                                  <Chip
                                     key={strategy}
                                     label={`${strategy} (${count})`}
                                     variant="outlined"

@@ -41,7 +41,11 @@ const LocationAnalysis = ({ activities }) => {
           />
           <LocationWeaknessPanel weaknesses={analysisData.weaknesses} />
           <LocationInsightsPanel insights={analysisData.insights} />
-          <LocationAnalysisTabs analysisData={analysisData} />
+          {/* Al analizar otra ubicación o mes se reinicia la pestaña y el mes mostrado */}
+          <LocationAnalysisTabs
+            key={`${analysisData.locationName}|${analysisData.selectedMonth}`}
+            analysisData={analysisData}
+          />
         </>
       )}
     </Box>

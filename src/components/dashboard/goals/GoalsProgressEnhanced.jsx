@@ -1,44 +1,32 @@
 // src/components/dashboard/goals/GoalsProgressEnhanced.jsx - NUEVO COMPONENTE COMPLETO
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useMemo } from 'react';
 import { 
-  Card, CardContent, CardHeader, Grid, Typography, Box, Paper, 
+  Card, CardContent, CardHeader, Grid, Typography, Box, 
   Button, Table, TableBody, TableCell, TableContainer, TableHead, TableRow,
-  Chip, LinearProgress, Alert, IconButton
+  Chip, LinearProgress
 } from '@mui/material';
 import { 
   ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, 
-  Tooltip, Legend, PieChart, Pie, Cell
+  Tooltip, Legend
 } from 'recharts';
 import TrendingUpIcon from '@mui/icons-material/TrendingUp';
 import TrendingDownIcon from '@mui/icons-material/TrendingDown';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import WarningIcon from '@mui/icons-material/Warning';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
+import { getActivityTypeLabel } from '../common/helpers';
+import { getContractorName } from '../../../config/contractors';
 
 const GoalsProgressEnhanced = ({ goals, contractor, onRefresh }) => {
-  const [processedData, setProcessedData] = useState(null);
   const [loading, setLoading] = useState(false);
-
-  useEffect(() => {
-    if (goals && goals.progress && goals.counts && goals.goals) {
-      setProcessedData(processGoalsData(goals, contractor));
-    }
-  }, [goals, contractor]);
 
   // Procesar datos para visualización
   const processGoalsData = (goalsData, contractorName) => {
     const { progress, counts, goals: targets } = goalsData;
     
-    // Mapear nombres según contratista
-    const getActionName = (type) => {
-      const actionNames = {
-        nutrition: contractorName === 'CUC' ? 'Educación Nutricional' : 'Salud Nutricional',
-        physical: contractorName === 'CUC' ? 'Educación en Salud Física' : 'Salud Física', 
-        psychosocial: contractorName === 'CUC' ? 'Educación Psicosocial' : 'Salud Psicosocial'
-      };
-      return actionNames[type] || type;
-    };
+    // Nombre de la acción según el estilo de etiquetas del contratista (config/contractors)
+    const getActionName = (type) => getActivityTypeLabel(type, contractorName);
 
     // Crear estructura de datos para estrategias
     const strategies = [];
@@ -161,6 +149,13 @@ const GoalsProgressEnhanced = ({ goals, contractor, onRefresh }) => {
       }
     };
   };
+
+  // Se recalcula cuando cambian las metas o el contratista (sin dejar datos viejos si las metas dejan de ser válidas)
+  const processedData = useMemo(() => (
+    goals && goals.progress && goals.counts && goals.goals
+      ? processGoalsData(goals, contractor)
+      : null
+  ), [goals, contractor]);
 
   // Función para obtener color según rendimiento
   const getPerformanceColor = (percentage) => {
@@ -316,7 +311,7 @@ const GoalsProgressEnhanced = ({ goals, contractor, onRefresh }) => {
       <Card sx={{ mb: 3 }}>
         <CardHeader 
           title="Progreso por Estrategia" 
-          subheader={`${contractor} - Cumplimiento de metas por estrategia`}
+          subheader={`${getContractorName(contractor)} - Cumplimiento de metas por estrategia`}
         />
         <CardContent>
           {chartData.length > 0 ? (

@@ -47,6 +47,7 @@ import ProfilePanel from '../profile/ProfilePanel';
 import activitiesService from '../../services/activitiesService';
 import localStorageService from '../../services/localStorageService';
 import syncService from '../../services/syncService';
+import { todayKey } from '../../utils/dates';
 
 import {
   getActivityTypeLabel,
@@ -55,6 +56,7 @@ import {
   formatSchedule,
   formatLocationType
 } from '../dashboard/common/helpers';
+import { getContractorName } from '../../config/contractors';
 
 // ========== LAZY LOADING PARA FIELDDASHBOARD ==========
 const FieldUserDashboard = React.lazy(() => import('../field/FieldUserDashboard'));
@@ -100,9 +102,9 @@ const ActivitiesPage = ({ user }) => {
   
   // ========== FUNCIONES CORE (SIN DEPENDENCIAS PROBLEMÁTICAS) ==========
   const checkPendingActivities = useCallback(() => {
-    const pendingActivities = localStorageService.getPendingActivities();
+    const pendingActivities = localStorageService.getPendingActivities(userId);
     setPendingSync(pendingActivities.length);
-  }, []);
+  }, [userId]);
 
   const getActivityDisplayLabel = useCallback((activity) => {
     if (!activity) return 'Actividad';
@@ -172,15 +174,16 @@ const ActivitiesPage = ({ user }) => {
     setHasMore(true);
   }, []);
 
-  const handleActivitySuccess = useCallback(() => {
+  const handleActivitySuccess = useCallback((message) => {
     setFormVisible(false);
+    setSelectedActivity(null);
     if (mainTabValue === 0) {
       loadActivities();
       checkPendingActivities();
     }
     setSnackbar({
       open: true,
-      message: 'Actividad registrada correctamente',
+      message: message || 'Actividad registrada correctamente',
       severity: 'success'
     });
   }, [mainTabValue, loadActivities, checkPendingActivities]);
@@ -204,7 +207,8 @@ const ActivitiesPage = ({ user }) => {
   const handleDuplicateActivity = useCallback((activity) => {
     const duplicatedActivity = {
       ...activity,
-      date: new Date().toISOString().split('T')[0],
+      date: todayKey(),
+      dateKey: undefined,
       status: undefined,
       approvedBy: undefined,
       approvedAt: undefined,
@@ -262,27 +266,28 @@ const ActivitiesPage = ({ user }) => {
 
   // ========== HANDLER DE SINCRONIZACIÓN ==========
   const handleSyncActivities = useCallback(async () => {
-    if (pendingSync === 0 || offline) return;
+    if (!userId || !localStorageService.isOnline()) return;
+    if (localStorageService.getPendingActivities(userId).length === 0) return;
     
     setSyncingActivities(true);
     try {
       const result = await syncService.syncPendingActivities(user);
+      setPendingSync(localStorageService.getPendingActivities(userId).length);
       
-      if (result.success) {
-        setPendingSync(0);
+      if (result.failed > 0 || result.error) {
         setSnackbar({
           open: true,
-          message: `${result.synced} actividades sincronizadas`,
-          severity: 'success'
-        });
-        if (mainTabValue === 0) loadActivities();
-      } else {
-        setSnackbar({
-          open: true,
-          message: 'Error al sincronizar algunas actividades',
+          message: `${result.synced || 0} actividades sincronizadas, ${result.failed || 0} con error. Se reintentará al recuperar conexión.`,
           severity: 'warning'
         });
+      } else if (result.synced > 0) {
+        setSnackbar({
+          open: true,
+          message: `${result.synced} actividades registradas sin conexión fueron enviadas`,
+          severity: 'success'
+        });
       }
+      if (result.synced > 0 && mainTabValue === 0) loadActivities();
     } catch (error) {
       setSnackbar({
         open: true,
@@ -292,7 +297,21 @@ const ActivitiesPage = ({ user }) => {
     } finally {
       setSyncingActivities(false);
     }
-  }, [pendingSync, offline, user, mainTabValue, loadActivities]);
+  }, [userId, user, mainTabValue, loadActivities]);
+
+  // Sincronización automática al entrar y cada vez que vuelve la conexión
+  const syncRef = useRef(handleSyncActivities);
+  useEffect(() => {
+    syncRef.current = handleSyncActivities;
+  }, [handleSyncActivities]);
+
+  useEffect(() => {
+    if (!userId) return undefined;
+    syncRef.current();
+    const handleOnlineSync = () => syncRef.current();
+    window.addEventListener('online', handleOnlineSync);
+    return () => window.removeEventListener('online', handleOnlineSync);
+  }, [userId]);
 
   // ========== HANDLERS SIMPLES ==========
   const handleCloseSnackbar = useCallback(() => {
@@ -370,7 +389,9 @@ const ActivitiesPage = ({ user }) => {
   }, [mainTabValue, checkPendingActivities]);
 
   // ========== COMPONENTES MEMOIZADOS ==========
-  const ActivitiesContent = React.memo(() => (
+  // Elementos JSX (no componentes definidos dentro del render: eso los desmontaría
+  // en cada render y borraría el formulario y el foco del buscador)
+  const activitiesContent = (
     <>
       {formVisible ? (
         <ActivityForm
@@ -569,9 +590,9 @@ const ActivitiesPage = ({ user }) => {
         </>
       )}
     </>
-  ));
+  );
 
-  const LazyFieldDashboard = React.memo(() => (
+  const fieldDashboardContent = (
     <React.Suspense fallback={
       <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '50vh' }}>
         <CircularProgress size={50} />
@@ -580,7 +601,7 @@ const ActivitiesPage = ({ user }) => {
     }>
       <FieldUserDashboard user={user} />
     </React.Suspense>
-  ));
+  );
 
   return (
     <Container maxWidth="lg">
@@ -591,7 +612,7 @@ const ActivitiesPage = ({ user }) => {
               Panel de Usuario
             </Typography>
             <Typography variant="subtitle1" color="text.secondary">
-              {userContractor} - {user?.name}
+              {getContractorName(userContractor)} - {user?.name}
             </Typography>
           </Grid>
         </Grid>
@@ -622,8 +643,8 @@ const ActivitiesPage = ({ user }) => {
           </Tabs>
         </Paper>
 
-        {mainTabValue === 0 && <ActivitiesContent />}
-        {mainTabValue === 1 && <LazyFieldDashboard />}
+        {mainTabValue === 0 && activitiesContent}
+        {mainTabValue === 1 && fieldDashboardContent}
         {mainTabValue === 2 && <ProfilePanel user={user} />}
 
       </Box>
@@ -654,7 +675,7 @@ const ActivitiesPage = ({ user }) => {
                         </Grid>
                         <Grid item xs={12} md={6}>
                           <Typography variant="body2">
-                            <strong>Contratista:</strong> {selectedActivity.contractor}
+                            <strong>Contratista:</strong> {getContractorName(selectedActivity.contractor)}
                           </Typography>
                         </Grid>
                         <Grid item xs={12} md={6}>

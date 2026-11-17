@@ -1,12 +1,17 @@
-export const performDetailedAnalysis = (locationActivities, locationInfo, selectedMonth) => {
-  const isCenterLocation = locationInfo?.type?.toLowerCase() === 'center';
+import { getLocationType, getIsoWeek, getIsoWeekKey, formatDate } from '../../common/helpers';
+import { parseActivityDate, toDateKey, todayKey, daysBetween } from '../../../../utils/dates';
+
+export const performDetailedAnalysis = (locationActivities, locationInfo) => {
+  const isCenterLocation = getLocationType(locationInfo) === 'center';
+  const capacity = Number(locationInfo?.capacity) || 0;
   
   // 1. AGRUPACIÓN POR DÍA + JORNADA para cálculo correcto de promedios
   const dayGroupMap = new Map();
   
   locationActivities.forEach(activity => {
-    const activityDate = new Date(activity.date);
-    const dateKey = activityDate.toISOString().split('T')[0];
+    // Fecha 'YYYY-MM-DD' en hora local; sin fecha válida no se puede agrupar por día
+    const dateKey = activity.dateKey || toDateKey(activity.date);
+    if (!dateKey) return;
     const schedule = activity.schedule || 'general';
     const groupKey = `${dateKey}-${schedule}`;
     
@@ -93,8 +98,8 @@ export const performDetailedAnalysis = (locationActivities, locationInfo, select
       avgJ2,
       serviceSessions: totalServiceSessions,
       uniqueServiceDays: [...new Set(dayGroups.map(g => g.date))].length,
-      capacity: locationInfo.capacity || 0,
-      utilizationRate: locationInfo.capacity > 0 ? Math.round((averageAttendance / locationInfo.capacity) * 100) : 0
+      capacity,
+      utilizationRate: capacity > 0 ? Math.round((averageAttendance / capacity) * 100) : 0
     }
   };
 };
@@ -129,115 +134,94 @@ export const analyzeComponents = (activities) => {
   return components;
 };
 
-export const analyzeTemporalPatterns = (dayGroups, monthFilter) => {
+// Período evaluado para la regularidad del servicio: desde la primera sesión hasta el fin de la
+// ventana de análisis (fecha final del filtro o, si no hay, hoy), y nunca antes de la última sesión.
+// Así una ubicación abandonada no parece regular por medirse solo hasta su última sesión.
+const getEvaluationPeriod = (sortedDates, windowEndKey) => {
+  if (sortedDates.length === 0) return { startKey: null, endKey: null, days: 0 };
+
+  const startKey = sortedDates[0];
+  const lastKey = sortedDates[sortedDates.length - 1];
+  const endKey = windowEndKey && windowEndKey > lastKey ? windowEndKey : lastKey;
+
+  return { startKey, endKey, days: daysBetween(startKey, endKey) + 1 };
+};
+
+// Fechas únicas 'YYYY-MM-DD' (ordenadas) de los grupos día + jornada
+const getSortedServiceDates = (dayGroups) =>
+  [...new Set(dayGroups.map(g => g.date).filter(Boolean))].sort();
+
+export const analyzeTemporalPatterns = (dayGroups, windowEndKey = todayKey()) => {
   const patterns = {
     weeklyAverages: {},
     monthlyCalendar: {},
     serviceRegularity: 0,
-    availableMonths: []
+    availableMonths: [],
+    periodDays: 0
   };
 
-  // 1. ✅ OBTENER TODOS LOS MESES DISPONIBLES (SIEMPRE)
-  const allMonthsSet = new Set();
-  dayGroups.forEach(group => {
-    if (group.date) {
-      try {
-        const date = new Date(group.date);
-        const monthKey = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
-        allMonthsSet.add(monthKey);
-      } catch (e) {
-        console.warn('Fecha inválida en dayGroups:', group.date);
-      }
-    }
-  });
-  patterns.availableMonths = Array.from(allMonthsSet).sort();
-
-  // 2. ✅ GENERAR DATOS SEMANALES
+  // Agrupar las sesiones por día
+  const groupsByDate = new Map();
   dayGroups.forEach(group => {
     if (!group.date) return;
-    
-    try {
-      const date = new Date(group.date);
-      const weekNumber = getWeekNumber(date);
-      const weekKey = `${date.getFullYear()}-W${weekNumber}`;
-      
-      if (!patterns.weeklyAverages[weekKey]) {
-        patterns.weeklyAverages[weekKey] = { 
-          beneficiaries: 0, 
-          sessions: 0, 
-          week: weekNumber,
-          year: date.getFullYear(),
-          monthName: date.toLocaleDateString('es-ES', { month: 'short' })
-        };
-      }
-      
+    if (!groupsByDate.has(group.date)) groupsByDate.set(group.date, []);
+    groupsByDate.get(group.date).push(group);
+  });
+  const sortedDates = getSortedServiceDates(dayGroups);
+
+  // 1. Meses con datos (ordenados cronológicamente)
+  patterns.availableMonths = [...new Set(sortedDates.map(dateKey => dateKey.slice(0, 7)))];
+
+  // 2. Datos semanales (semanas ISO)
+  sortedDates.forEach(dateKey => {
+    const date = parseActivityDate(dateKey);
+    if (!date) return;
+
+    const weekKey = getIsoWeekKey(date);
+    if (!patterns.weeklyAverages[weekKey]) {
+      const { year, week } = getIsoWeek(date);
+      patterns.weeklyAverages[weekKey] = { 
+        beneficiaries: 0, 
+        sessions: 0, 
+        week,
+        year,
+        monthName: date.toLocaleDateString('es-ES', { month: 'short' })
+      };
+    }
+
+    groupsByDate.get(dateKey).forEach(group => {
       patterns.weeklyAverages[weekKey].beneficiaries += group.maxBeneficiaries;
       patterns.weeklyAverages[weekKey].sessions++;
-    } catch (e) {
-      console.warn('Error procesando fecha para semanas:', group.date, e);
-    }
+    });
   });
 
   // Calcular promedios semanales
-  Object.keys(patterns.weeklyAverages).forEach(weekKey => {
-    const week = patterns.weeklyAverages[weekKey];
+  Object.values(patterns.weeklyAverages).forEach(week => {
     week.average = week.sessions > 0 ? Math.round(week.beneficiaries / week.sessions) : 0;
   });
 
-  // 3. ✅ GENERAR DATOS MENSUALES PARA TODOS LOS MESES (CORREGIDO)
-  // Si hay un filtro específico, usarlo. Si no, generar para todos los meses disponibles
-  const monthsToProcess = monthFilter ? [monthFilter] : patterns.availableMonths;
-  
-  monthsToProcess.forEach(currentMonth => {
-    try {
-      const [year, monthStr] = currentMonth.split('-');
-      const month = parseInt(monthStr, 10);
-      const daysInMonth = new Date(parseInt(year, 10), month, 0).getDate();
-      
-      // Generar datos para cada día del mes
-      for (let day = 1; day <= daysInMonth; day++) {
-        const dateKey = `${year}-${monthStr}-${day.toString().padStart(2, '0')}`;
-        
-        // Filtrar actividades de este día específico
-        const dayData = dayGroups.filter(g => g.date === dateKey);
-        
-        // Solo agregar días que tengan actividad
-        if (dayData.length > 0) {
-          patterns.monthlyCalendar[dateKey] = {
-            date: dateKey,
-            dayOfMonth: day,
-            services: dayData.length,
-            attendance: dayData.reduce((sum, g) => sum + g.maxBeneficiaries, 0),
-            rations: dayData.reduce((sum, g) => sum + g.nutritionRations, 0),
-            components: [...new Set(dayData.flatMap(g => Array.from(g.components)))]
-          };
-        }
-      }
-    } catch (e) {
-      console.warn('Error procesando mes:', currentMonth, e);
-    }
+  // 3. Calendario mensual con TODOS los meses que tienen datos
+  // (la pestaña de calendario muestra el mes al que navega el usuario)
+  groupsByDate.forEach((groups, dateKey) => {
+    patterns.monthlyCalendar[dateKey] = {
+      date: dateKey,
+      dayOfMonth: parseInt(dateKey.slice(8, 10), 10),
+      services: groups.length,
+      attendance: groups.reduce((sum, g) => sum + g.maxBeneficiaries, 0),
+      rations: groups.reduce((sum, g) => sum + g.nutritionRations, 0),
+      components: [...new Set(groups.flatMap(g => Array.from(g.components)))]
+    };
   });
 
-  // 4. ✅ CALCULAR REGULARIDAD DEL SERVICIO
-  const uniqueDates = [...new Set(dayGroups.map(g => g.date))];
-  const totalDaysInPeriod = dayGroups.length > 0 ?
-    Math.ceil((new Date(Math.max(...dayGroups.map(g => new Date(g.date)))) -
-      new Date(Math.min(...dayGroups.map(g => new Date(g.date))))) / (1000 * 60 * 60 * 24)) + 1 : 0;
-  
-  patterns.serviceRegularity = totalDaysInPeriod > 0 ? 
-    (uniqueDates.length / totalDaysInPeriod) * 100 : 0;
-
-  console.log('📊 Patrones temporales generados:', {
-    availableMonths: patterns.availableMonths,
-    weeklyData: Object.keys(patterns.weeklyAverages).length,
-    monthlyData: Object.keys(patterns.monthlyCalendar).length,
-    serviceRegularity: patterns.serviceRegularity.toFixed(1)
-  });
+  // 4. Regularidad del servicio: % de días del período con servicio
+  const period = getEvaluationPeriod(sortedDates, windowEndKey);
+  patterns.periodDays = period.days;
+  patterns.serviceRegularity = period.days > 0 ? (sortedDates.length / period.days) * 100 : 0;
 
   return patterns;
 };
 
-export const analyzeWeaknesses = (avgAttendance, capacity, components, dayGroups, isCenter) => {
+export const analyzeWeaknesses = (avgAttendance, capacity, components, dayGroups, isCenter, windowEndKey = todayKey()) => {
   const weaknesses = [];
   
   if (isCenter && capacity > 0) {
@@ -273,11 +257,10 @@ export const analyzeWeaknesses = (avgAttendance, capacity, components, dayGroups
     });
   }
 
-  // CORREGIDO: Cálculo mejorado de regularidad del servicio
-  const uniqueDates = [...new Set(dayGroups.map(g => g.date))];
-  const totalDaysInPeriod = dayGroups.length > 0 ?
-    Math.ceil((new Date(Math.max(...dayGroups.map(g => new Date(g.date)))) -
-      new Date(Math.min(...dayGroups.map(g => new Date(g.date))))) / (1000 * 60 * 60 * 24)) + 1 : 0;
+  // Regularidad del servicio, medida hasta el fin de la ventana de análisis (ver getEvaluationPeriod)
+  const uniqueDates = getSortedServiceDates(dayGroups);
+  const period = getEvaluationPeriod(uniqueDates, windowEndKey);
+  const totalDaysInPeriod = period.days;
   
   // Calcular días de servicio esperados según tipo de ubicación
   const expectedServiceDays = isCenter ? 
@@ -292,7 +275,7 @@ export const analyzeWeaknesses = (avgAttendance, capacity, components, dayGroups
     weaknesses.push({
       type: 'irregular_service',
       severity: 'medium',
-      message: `Servicio irregular: solo ${uniqueDates.length} de ${expectedServiceDays} días esperados para un ${locationTypeText} (${serviceRegularity.toFixed(1)}%)`,
+      message: `Servicio irregular: solo ${uniqueDates.length} de ${expectedServiceDays} días esperados para un ${locationTypeText} entre el ${formatDate(period.startKey)} y el ${formatDate(period.endKey)} (${serviceRegularity.toFixed(1)}%)`,
       suggestion: 'Revisar programación y asegurar continuidad del servicio'
     });
   }
@@ -304,16 +287,9 @@ export const analyzeWeaknesses = (avgAttendance, capacity, components, dayGroups
       serviceRegularity,
       uniqueServiceDays: uniqueDates.length,
       expectedServiceDays,
-      totalDaysInPeriod
+      totalDaysInPeriod,
+      periodStart: period.startKey,
+      periodEnd: period.endKey
     } 
   };
-};
-
-// Función auxiliar para calcular número de semana ISO
-const getWeekNumber = (date) => {
-  const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
-  const dayNum = d.getUTCDay() || 7;
-  d.setUTCDate(d.getUTCDate() + 4 - dayNum);
-  const yearStart = new Date(Date.UTC(d.getUTCFullYear(),0,1));
-  return Math.ceil((((d - yearStart) / 86400000) + 1)/7);
 };

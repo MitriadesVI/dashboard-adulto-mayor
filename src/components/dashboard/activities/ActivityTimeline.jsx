@@ -1,46 +1,34 @@
 // src/components/dashboard/activities/ActivityTimeline.jsx
-import React from 'react';
+import React, { useMemo } from 'react';
 import { Card, CardContent, CardHeader } from '@mui/material';
 import { 
   ResponsiveContainer, LineChart, Line, CartesianGrid, 
   XAxis, YAxis, Tooltip, Legend 
 } from 'recharts';
+import { formatDate } from '../common/helpers';
+import { toDateKey } from '../../../utils/dates';
 
 const ActivityTimeline = ({ activities, title = "Actividades por Fecha" }) => {
-  // Función MODIFICADA para no contar entregas de alimentos
-  const getActivityCountsByDate = () => {
+  // Cuenta solo actividades educativas por fecha: las entregas de alimentos no se cuentan como actividades
+  const data = useMemo(() => {
     if (!activities || !activities.length) return [];
     
     const counts = {};
     
-    // Agrupar por fecha
     activities.forEach(activity => {
-      if (!activity || !activity.date) return;
+      if (!activity || !activity.educationalActivity?.included) return;
       
-      // MODIFICADO: NO contar entregas de alimentos como actividades
-      if (activity.type === 'nutrition' && 
-          (activity.subtype === 'centerRation' || 
-           activity.subtype === 'parkSnack' || 
-           activity.subtype === 'ration')) {
-        return; // Saltamos estas entradas
-      }
-      
-      try {
-        // Formato YYYY-MM-DD
-        const dateStr = new Date(activity.date).toISOString().split('T')[0];
-        counts[dateStr] = (counts[dateStr] || 0) + 1;
-      } catch (e) {
-        console.warn("Error procesando fecha:", e);
-      }
+      // Clave 'YYYY-MM-DD' en hora local
+      const dateStr = activity.dateKey || toDateKey(activity.date);
+      if (!dateStr) return;
+      counts[dateStr] = (counts[dateStr] || 0) + 1;
     });
     
     // Convertir a array y ordenar por fecha
     return Object.entries(counts)
       .map(([date, count]) => ({ date, count }))
-      .sort((a, b) => new Date(a.date) - new Date(b.date));
-  };
-
-  const data = getActivityCountsByDate();
+      .sort((a, b) => a.date.localeCompare(b.date));
+  }, [activities]);
 
   return (
     <Card>
@@ -52,11 +40,11 @@ const ActivityTimeline = ({ activities, title = "Actividades por Fecha" }) => {
         <ResponsiveContainer width="100%" height={300}>
           <LineChart data={data}>
             <CartesianGrid strokeDasharray="3 3" />
-            <XAxis dataKey="date" />
-            <YAxis />
+            <XAxis dataKey="date" tickFormatter={(value) => formatDate(value).slice(0, 5)} />
+            <YAxis allowDecimals={false} />
             <Tooltip 
               formatter={(value) => [`${value} actividades`, 'Cantidad']}
-              labelFormatter={(value) => `Fecha: ${new Date(value).toLocaleDateString('es-CO')}`}
+              labelFormatter={(value) => `Fecha: ${formatDate(value)}`}
             />
             <Legend />
             <Line 

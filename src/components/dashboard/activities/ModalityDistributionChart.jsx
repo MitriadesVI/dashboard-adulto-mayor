@@ -8,6 +8,7 @@ import {
   PieChart, Pie, Cell, Tooltip, Legend, ResponsiveContainer
 } from 'recharts';
 import { COLORS } from '../common/helpers';
+import { getContractorName } from '../../../config/contractors';
 
 // Componente para el tooltip personalizado que muestra cantidad y porcentaje
 const CustomTooltip = ({ active, payload }) => {
@@ -69,9 +70,6 @@ const ModalityDistributionChart = ({ activities }) => {
     educationalActivities.forEach(activity => {
       if (!activity.location || !activity.location.type) return;
       
-      // DEBUG: Mostrar el tipo real que llega desde Firebase
-      console.log("Tipo de ubicación desde Firebase:", activity.location.type, "para ubicación:", activity.location.name);
-      
       // Normalizar el tipo de ubicación con mapeo más específico
       let locationType = activity.location.type.toLowerCase().trim();
       
@@ -94,7 +92,6 @@ const ModalityDistributionChart = ({ activities }) => {
       } else {
         // En lugar de "Otro", usar el tipo original para debugging
         locationType = `Tipo: ${activity.location.type}`;
-        console.warn("Tipo de ubicación no reconocido:", activity.location.type);
       }
       
       // Contar para estadísticas globales
@@ -110,9 +107,6 @@ const ModalityDistributionChart = ({ activities }) => {
           (contractorModalityCounts[activity.contractor][locationType] || 0) + 1;
       }
     });
-    
-    // DEBUG: Mostrar conteos finales
-    console.log("Conteos por modalidad:", modalityCounts);
     
     // Convertir a formato para gráficos
     const totalActivities = educationalActivities.length;
@@ -187,7 +181,7 @@ const ModalityDistributionChart = ({ activities }) => {
             {topContractors.map((contractor, index) => (
               <Grid item xs={12} md={4} key={contractor}>
                 <Typography variant="h6" align="center" gutterBottom>
-                  {contractor}
+                  {getContractorName(contractor)}
                 </Typography>
                 <ResponsiveContainer width="100%" height={300}>
                   <PieChart>

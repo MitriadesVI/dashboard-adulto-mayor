@@ -1,7 +1,6 @@
 // src/components/field/gamification/FieldInsights.jsx
 import React from 'react';
 import {
-  Box,
   Paper,
   Typography,
   List,

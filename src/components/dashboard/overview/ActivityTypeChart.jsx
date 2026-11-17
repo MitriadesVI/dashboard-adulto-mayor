@@ -1,21 +1,16 @@
 // src/components/dashboard/overview/ActivityTypeChart.jsx - ACTUALIZADO
 
-import React, { useState, useEffect } from 'react';
+import React, { useMemo } from 'react';
 import { Card, CardContent, CardHeader, Typography, Box, useTheme, useMediaQuery } from '@mui/material';
 import { PieChart, Pie, Cell, ResponsiveContainer, Legend, Tooltip } from 'recharts';
-import { getActivityTypeLabel, PIE_COLORS } from '../common/helpers';
+import { getActivityTypeLabel, getCommonContractor, PIE_COLORS } from '../common/helpers';
 
 const ActivityTypeChart = ({ activities, title = "Distribución de Tipos de Actividades" }) => {
-  const [data, setData] = useState([]);
   const theme = useTheme();
   const isSmall = useMediaQuery(theme.breakpoints.down('sm'));
   
-  useEffect(() => {
-    setData(prepareData());
-  }, [activities]);
-  
-  // FUNCIÓN CORREGIDA - Usar nueva estructura de datos
-  const prepareData = () => {
+  // Solo actividades educativas (nueva estructura de datos)
+  const data = useMemo(() => {
     if (!activities || activities.length === 0) return [];
     
     const typeCount = {
@@ -26,38 +21,32 @@ const ActivityTypeChart = ({ activities, title = "Distribución de Tipos de Acti
     };
     
     activities.forEach(activity => {
-      // CORRECCIÓN: Solo considerar actividades educativas con nueva estructura
       if (!activity || !activity.educationalActivity || !activity.educationalActivity.included) {
         return;
       }
       
       const type = activity.educationalActivity.type;
       
-      if (!type) {
-        typeCount.unknown += 1;
-        return;
-      }
-      
-      if (typeCount[type] !== undefined) {
+      if (type && typeCount[type] !== undefined) {
         typeCount[type] += 1;
       } else {
         typeCount.unknown += 1;
       }
     });
     
+    // Etiquetas según el contratista (si hay varios contratistas se usan etiquetas genéricas)
+    const contractor = getCommonContractor(activities);
+    
     // Remover tipos con 0 actividades
-    const result = Object.entries(typeCount)
+    return Object.entries(typeCount)
       .filter(([_, count]) => count > 0)
       .map(([type, count]) => ({
-        name: getActivityTypeLabel(type, activities[0]?.contractor),
+        name: type === 'unknown' ? 'Sin clasificar' : getActivityTypeLabel(type, contractor),
         value: count,
         fill: PIE_COLORS[type]
       }));
-    
-    return result;
-  };
+  }, [activities]);
   
-  // Resto del componente igual...
   const total = data.reduce((sum, item) => sum + item.value, 0);
   
   const renderCustomizedLabel = ({ cx, cy, midAngle, innerRadius, outerRadius, percent, index }) => {

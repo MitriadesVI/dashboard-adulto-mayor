@@ -4,7 +4,7 @@ import {
   ResponsiveContainer, ComposedChart, Bar, Line, 
   CartesianGrid, XAxis, YAxis, Tooltip, Legend 
 } from 'recharts';
-import { COLORS } from '../../common/helpers';
+import { COLORS, formatMonthLabel } from '../../common/helpers';
 
 // Tooltip personalizado para mostrar información detallada
 const CustomTooltip = ({ active, payload, label }) => {
@@ -49,10 +49,7 @@ const MonthlyCalendarChart = ({ data, currentMonth }) => {
       <Alert severity="info" sx={{ m: 2 }}>
         <Typography variant="h6" gutterBottom>Sin actividad en este mes</Typography>
         <Typography variant="body2">
-          No se registraron actividades en {currentMonth ? 
-            new Date(currentMonth + '-01').toLocaleDateString('es-ES', { month: 'long', year: 'numeric' }) : 
-            'el mes seleccionado'
-          }. 
+          No se registraron actividades en {currentMonth ? formatMonthLabel(currentMonth) : 'el mes seleccionado'}. 
           {currentMonth && (
             <span> Use las flechas de navegación para ver otros meses con datos.</span>
           )}
@@ -65,7 +62,6 @@ const MonthlyCalendarChart = ({ data, currentMonth }) => {
   const totalDays = data.length;
   const totalAttendance = data.reduce((sum, day) => sum + day.asistencia, 0);
   const totalRations = data.reduce((sum, day) => sum + day.raciones, 0);
-  const totalSessions = data.reduce((sum, day) => sum + day.servicios, 0);
   const avgAttendancePerDay = Math.round(totalAttendance / totalDays);
 
   // Ordenar datos por día para mejor visualización
@@ -176,10 +172,7 @@ const MonthlyCalendarChart = ({ data, currentMonth }) => {
         </Typography>
         {currentMonth && (
           <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 0.5 }}>
-            <strong>Período:</strong> {new Date(currentMonth + '-01').toLocaleDateString('es-ES', { 
-              month: 'long', 
-              year: 'numeric' 
-            })}
+            <strong>Período:</strong> {formatMonthLabel(currentMonth)}
           </Typography>
         )}
       </Box>

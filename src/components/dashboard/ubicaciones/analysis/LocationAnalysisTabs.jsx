@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { 
   Card, Box, Tabs, Tab, CardContent, Typography, Grid, 
-  Button, IconButton, Alert, Chip
+  IconButton, Alert, Chip
 } from '@mui/material';
 import TrendingUpIcon from '@mui/icons-material/TrendingUp';
 import CalendarTodayIcon from '@mui/icons-material/CalendarToday';
@@ -9,6 +9,8 @@ import PieChartIcon from '@mui/icons-material/PieChart';
 import ArrowBackIosIcon from '@mui/icons-material/ArrowBackIos';
 import ArrowForwardIosIcon from '@mui/icons-material/ArrowForwardIos';
 import CalendarMonthIcon from '@mui/icons-material/CalendarMonth';
+import { formatMonthLabel } from '../../common/helpers';
+import { todayKey } from '../../../../utils/dates';
 
 // Importar charts individuales
 import WeeklyTrendChart from '../charts/WeeklyTrendChart';
@@ -19,16 +21,7 @@ import ComponentsDistributionChart from '../charts/ComponentsDistributionChart';
 const MonthNavigation = ({ selectedMonth, availableMonths, onMonthChange }) => {
   const currentIndex = availableMonths.indexOf(selectedMonth);
   
-  const formatMonthName = (monthStr) => {
-    try {
-      return new Date(monthStr + '-01').toLocaleDateString('es-ES', { 
-        month: 'long', 
-        year: 'numeric' 
-      });
-    } catch {
-      return monthStr;
-    }
-  };
+  const formatMonthName = formatMonthLabel;
 
   if (availableMonths.length <= 1) {
     return (
@@ -78,29 +71,28 @@ const MonthNavigation = ({ selectedMonth, availableMonths, onMonthChange }) => {
   );
 };
 
+// Mes a mostrar: el mes elegido en el filtro si tiene datos; si no, el más reciente con datos
+const pickMonth = (availableMonths, preferredMonth) => {
+  if (!availableMonths || availableMonths.length === 0) return preferredMonth || todayKey().slice(0, 7);
+  return availableMonths.includes(preferredMonth) ? preferredMonth : availableMonths[availableMonths.length - 1];
+};
+
 const LocationAnalysisTabs = ({ analysisData, onMonthChange }) => {
   const [tabValue, setTabValue] = useState(0);
   
-  // ✅ INICIALIZAR MES ACTUAL CON EL PRIMER MES DISPONIBLE
-  const [currentMonth, setCurrentMonth] = useState(() => {
-    if (analysisData?.charts?.availableMonths?.length > 0) {
-      return analysisData.charts.availableMonths[0];
-    }
-    return new Date().toISOString().slice(0, 7);
-  });
+  const availableMonths = analysisData?.charts?.availableMonths;
+  const preferredMonth = analysisData?.selectedMonth;
 
-  // ✅ ACTUALIZAR MES CUANDO CAMBIEN LOS DATOS
+  const [currentMonth, setCurrentMonth] = useState(() => pickMonth(availableMonths, preferredMonth));
+
+  // Solo cambia el mes si los meses disponibles cambiaron y el mes actual ya no está entre ellos
+  // (no debe volver al primer mes cada vez que el usuario navega con las flechas)
   useEffect(() => {
-    if (analysisData?.charts?.availableMonths?.length > 0) {
-      const firstAvailableMonth = analysisData.charts.availableMonths[0];
-      if (currentMonth !== firstAvailableMonth) {
-        setCurrentMonth(firstAvailableMonth);
-      }
-    }
-  }, [analysisData?.charts?.availableMonths, currentMonth]);
+    if (!availableMonths || availableMonths.length === 0) return;
+    setCurrentMonth(prev => (availableMonths.includes(prev) ? prev : pickMonth(availableMonths, preferredMonth)));
+  }, [availableMonths, preferredMonth]);
 
   const handleMonthChange = (newMonth) => {
-    console.log('📅 Cambiando mes de', currentMonth, 'a', newMonth);
     setCurrentMonth(newMonth);
     if (onMonthChange) {
       onMonthChange(newMonth);
@@ -120,12 +112,6 @@ const LocationAnalysisTabs = ({ analysisData, onMonthChange }) => {
     const filtered = calendarArray.filter(day => {
       if (!day || !day.date) return false;
       return day.date.startsWith(currentMonth);
-    });
-    
-    console.log(`📅 Datos mensuales para ${currentMonth}:`, {
-      totalDatos: calendarArray.length,
-      filtrados: filtered.length,
-      muestra: filtered.slice(0, 2)
     });
     
     return filtered;

@@ -1,57 +1,56 @@
 import localStorageService from './localStorageService';
 import activitiesService from './activitiesService';
 
+// Evita dos sincronizaciones simultáneas (botón + evento 'online'), que subirían duplicados
+let syncInProgress = null;
+
 const syncService = {
   /**
-   * Sincroniza las actividades guardadas localmente cuando no había conexión
+   * Sincroniza las actividades del usuario guardadas localmente cuando no había conexión
    * @param {Object} user - Datos del usuario actual
    * @returns {Object} Resultado de la sincronización
    */
   syncPendingActivities: async (user) => {
-    try {
-      // Obtener actividades pendientes
-      const pendingActivities = localStorageService.getPendingActivities();
-      
-      if (pendingActivities.length === 0) {
-        return { success: true, synced: 0, failed: 0 };
-      }
-      
-      let synced = 0;
-      let failed = 0;
-      
-      // Sincronizar cada actividad
-      for (const activity of pendingActivities) {
-        try {
-          // Extraer el id temporal
-          const tempId = activity.id;
-          delete activity.id;
-          delete activity.status;
-          
-          // Subir a Firebase
-          await activitiesService.createActivity(activity, user);
-          
-          // Si se sube correctamente, eliminar de localStorage
-          localStorageService.removePendingActivity(tempId);
-          synced++;
-        } catch (error) {
-          console.error('Error al sincronizar actividad:', error);
-          failed++;
+    if (syncInProgress) return syncInProgress;
+
+    syncInProgress = (async () => {
+      try {
+        const pendingActivities = localStorageService.getPendingActivities(user?.uid);
+        
+        if (pendingActivities.length === 0) {
+          return { success: true, synced: 0, failed: 0, total: 0 };
         }
+        
+        let synced = 0;
+        let failed = 0;
+        
+        for (const pending of pendingActivities) {
+          const { id: tempId, status, ...activity } = pending;
+          try {
+            await activitiesService.createActivity(activity);
+            localStorageService.removePendingActivity(tempId);
+            synced++;
+          } catch (error) {
+            console.error('Error al sincronizar actividad:', error);
+            failed++;
+          }
+        }
+        
+        return {
+          success: failed === 0,
+          synced,
+          failed,
+          total: pendingActivities.length
+        };
+      } catch (error) {
+        console.error('Error durante la sincronización:', error);
+        return { success: false, synced: 0, failed: 0, error: error.message };
+      } finally {
+        syncInProgress = null;
       }
-      
-      return {
-        success: failed === 0,
-        synced,
-        failed,
-        total: pendingActivities.length
-      };
-    } catch (error) {
-      console.error('Error durante la sincronización:', error);
-      return {
-        success: false,
-        error: error.message
-      };
-    }
+    })();
+
+    return syncInProgress;
   },
   
   /**
@@ -64,7 +63,7 @@ const syncService = {
     const handleOnline = async () => {
       try {
         // Solo sincronizar si hay actividades pendientes
-        const pendingActivities = localStorageService.getPendingActivities();
+        const pendingActivities = localStorageService.getPendingActivities(user?.uid);
         if (pendingActivities.length > 0) {
           await syncService.syncPendingActivities(user);
           
@@ -91,8 +90,8 @@ const syncService = {
    * Verifica si hay actividades pendientes de sincronizar
    * @returns {Number} Número de actividades pendientes
    */
-  checkPendingActivities: () => {
-    return localStorageService.getPendingActivities().length;
+  checkPendingActivities: (uid) => {
+    return localStorageService.getPendingActivities(uid).length;
   },
   
   /**

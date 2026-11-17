@@ -211,7 +211,7 @@ const locationsService = {
         
         // Calcular total de beneficiarios
         const totalBeneficiaries = locationActivities.reduce(
-          (sum, activity) => sum + (Number(activity.beneficiaries) || 0), 0
+          (sum, activity) => sum + (Number(activity.totalBeneficiaries) || 0), 0
         );
         
         // Calcular promedio de beneficiarios por actividad

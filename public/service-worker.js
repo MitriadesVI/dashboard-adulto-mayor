@@ -1,7 +1,9 @@
 // public/service-worker.js - VERSIÓN CORREGIDA
 
-// Versión automática 
-const CACHE_VERSION = 'sepam-cache-' + new Date().getTime();
+// Versión del caché. Debe ser una constante: si se calcula con la hora, cada vez que el
+// navegador reinicia el service worker se abre un caché vacío y la app no carga sin conexión.
+// Cambiarla solo si se modifica la estrategia de caché.
+const CACHE_VERSION = 'sepam-cache-v2';
 
 // Archivos críticos que SIEMPRE deben estar disponibles offline
 const CRITICAL_URLS = [
@@ -102,27 +104,35 @@ self.addEventListener('fetch', (event) => {
 
 // 🎯 MANEJAR REQUESTS CON ESTRATEGIAS INTELIGENTES
 async function handleRequest(request, url) {
+  const isNavigation = request.mode === 'navigate' ||
+    (request.headers.get('accept') || '').includes('text/html');
+
   try {
-    // 1. ARCHIVOS CRÍTICOS: Cache First
-    if (CRITICAL_URLS.some(criticalUrl => url.endsWith(criticalUrl))) {
+    // 1. PÁGINAS (index.html y rutas de la SPA): Network First.
+    //    Así cada despliegue nuevo llega a los usuarios; sin conexión se usa la copia guardada.
+    if (isNavigation || url.endsWith('/index.html') || url.endsWith('/manifest.json')) {
+      return await networkFirst(request, isNavigation);
+    }
+    
+    // 2. JS/CSS de /static/ llevan hash en el nombre (inmutables): Cache First
+    if (url.includes('/static/')) {
       return await cacheFirst(request);
     }
     
-    // 2. ASSETS ESTÁTICOS: Cache First con revalidación
+    // 3. Otros assets (íconos, imágenes): Cache First con revalidación
     if (/\.(js|css|png|jpg|jpeg|gif|svg|woff|woff2|ico)$/.test(url)) {
       return await cacheFirst(request, true);
     }
     
-    // 3. TODO LO DEMÁS: Network First (incluye APIs no-Firebase)
-    return await networkFirst(request);
+    // 4. TODO LO DEMÁS: Network First
+    return await networkFirst(request, false);
     
   } catch (error) {
     console.error('[SW] ❌ Error manejando request:', url, error);
     
-    // Fallback para páginas HTML
-    if (request.headers.get('accept')?.includes('text/html')) {
+    if (isNavigation) {
       const cache = await caches.open(CACHE_VERSION);
-      return await cache.match('/') || new Response('Offline', { status: 503 });
+      return (await cache.match('/index.html')) || (await cache.match('/')) || new Response('Offline', { status: 503 });
     }
     
     throw error;
@@ -160,24 +170,23 @@ async function cacheFirst(request, revalidate = false) {
   return networkResponse;
 }
 
-// 🌐 ESTRATEGIA: Network First  
-async function networkFirst(request) {
+// 🌐 ESTRATEGIA: Network First
+// Para navegaciones de la SPA (/activities, /dashboard...) el fallback sin conexión es index.html
+async function networkFirst(request, isNavigation) {
+  const cache = await caches.open(CACHE_VERSION);
   try {
-    console.log('[SW] 🌐 Network first:', request.url);
     const networkResponse = await fetch(request);
     
     if (networkResponse.ok && !shouldNeverCache(request.url)) {
-      const cache = await caches.open(CACHE_VERSION);
-      cache.put(request, networkResponse.clone());
+      cache.put(isNavigation ? '/index.html' : request, networkResponse.clone());
     }
     
     return networkResponse;
     
   } catch (error) {
-    // Network falló, intentar cache
-    console.log('[SW] 📱 Network failed, trying cache:', request.url);
-    const cache = await caches.open(CACHE_VERSION);
-    const cachedResponse = await cache.match(request);
+    const cachedResponse = isNavigation
+      ? (await cache.match('/index.html')) || (await cache.match('/'))
+      : await cache.match(request);
     
     if (cachedResponse) {
       return cachedResponse;

@@ -1,6 +1,6 @@
 // src/components/dashboard/overview/ModalityEfficiencyDashboard.jsx
 
-import React from 'react';
+import React, { useMemo } from 'react';
 import { 
   Card, CardContent, CardHeader, Grid, Typography, Box, 
   LinearProgress, Chip, Divider
@@ -13,10 +13,10 @@ import LocationOnIcon from '@mui/icons-material/LocationOn';
 import GroupIcon from '@mui/icons-material/Group';
 import EventIcon from '@mui/icons-material/Event';
 import TrendingUpIcon from '@mui/icons-material/TrendingUp';
-import { getModalityEfficiencyMetrics } from '../common/helpers';
+import { getModalityEfficiencyMetrics, calculateAverageAttendance } from '../common/helpers';
 
 const ModalityEfficiencyDashboard = ({ activities, title = "Análisis de Eficiencia por Modalidad" }) => {
-  const metrics = getModalityEfficiencyMetrics(activities);
+  const metrics = useMemo(() => getModalityEfficiencyMetrics(activities), [activities]);
   
   // Colores para las modalidades
   const COLORS = {
@@ -24,22 +24,13 @@ const ModalityEfficiencyDashboard = ({ activities, title = "Análisis de Eficien
     park: '#4CAF50'
   };
 
-  // Preparar datos para gráfico de barras comparativo
+  // Gráfico comparativo: una sola métrica (asistentes por jornada) para no mezclar unidades distintas
+  // en el mismo eje. Las demás métricas (actividades por día, por ubicación) se muestran en las tarjetas.
   const comparisonData = [
     {
-      name: 'Actividades/Día',
-      'Centros Fijos': metrics.centers.activitiesPerDay || 0,
-      'Parques/Espacios': metrics.parks.activitiesPerDay || 0
-    },
-    {
-      name: 'Beneficiarios Promedio',
+      name: 'Beneficiarios por jornada',
       'Centros Fijos': metrics.centers.averageBeneficiaries || 0,
       'Parques/Espacios': metrics.parks.averageBeneficiaries || 0
-    },
-    {
-      name: 'Actividades/Ubicación',
-      'Centros Fijos': metrics.centers.activitiesPerLocation || 0,
-      'Parques/Espacios': metrics.parks.activitiesPerLocation || 0
     }
   ];
 
@@ -54,6 +45,12 @@ const ModalityEfficiencyDashboard = ({ activities, title = "Análisis de Eficien
     if (efficiency >= 1) return { level: 'Media', color: 'warning' };
     return { level: 'Baja', color: 'error' };
   };
+
+  // Asistencia promedio por jornada de servicio de todas las actividades educativas (misma unidad en ambas modalidades)
+  const overallAverageAttendance = useMemo(
+    () => calculateAverageAttendance((activities || []).filter(a => a?.educationalActivity?.included === true)),
+    [activities]
+  );
 
   if (metrics.summary.totalEducational === 0) {
     return (
@@ -108,7 +105,7 @@ const ModalityEfficiencyDashboard = ({ activities, title = "Análisis de Eficien
                 {metrics.centers.totalBeneficiaries + metrics.parks.totalBeneficiaries}
               </Typography>
               <Typography variant="body2" color="success.contrastText">
-                Total Beneficiarios
+                Beneficiarios (Act. Educativas)
               </Typography>
             </Box>
           </Grid>
@@ -117,10 +114,10 @@ const ModalityEfficiencyDashboard = ({ activities, title = "Análisis de Eficien
             <Box sx={{ textAlign: 'center', p: 2, bgcolor: 'warning.light', borderRadius: 1 }}>
               <TrendingUpIcon sx={{ fontSize: 40, mb: 1, color: 'warning.contrastText' }} />
               <Typography variant="h4" fontWeight="bold" color="warning.contrastText">
-                {Math.round((metrics.centers.efficiency + metrics.parks.efficiency) / 2 * 100) / 100}
+                {overallAverageAttendance}
               </Typography>
               <Typography variant="body2" color="warning.contrastText">
-                Eficiencia Promedio
+                Beneficiarios por Jornada
               </Typography>
             </Box>
           </Grid>
@@ -157,18 +154,12 @@ const ModalityEfficiencyDashboard = ({ activities, title = "Análisis de Eficien
           <Grid item xs={12} md={6}>
             <Box sx={{ mb: 2 }}>
               <Typography variant="h6" gutterBottom>
-                Comparativa de Eficiencia
+                Comparativa de Asistencia por Jornada
               </Typography>
               <ResponsiveContainer width="100%" height={200}>
                 <BarChart data={comparisonData}>
                   <CartesianGrid strokeDasharray="3 3" />
-                  <XAxis 
-                    dataKey="name" 
-                    fontSize={10}
-                    angle={-45}
-                    textAnchor="end"
-                    height={60}
-                  />
+                  <XAxis dataKey="name" fontSize={12} />
                   <YAxis fontSize={12} />
                   <Tooltip />
                   <Legend />
@@ -291,7 +282,7 @@ const ModalityEfficiencyDashboard = ({ activities, title = "Análisis de Eficien
 
               <Box sx={{ mt: 2 }}>
                 <Typography variant="body2" color="text.secondary">
-                  Promedio de beneficiarios: <strong>{metrics.parks.averageBeneficiaries}</strong>
+                  Promedio de beneficiarios por jornada: <strong>{metrics.parks.averageBeneficiaries}</strong>
                 </Typography>
                 <Typography variant="body2" color="text.secondary">
                   Total beneficiarios: <strong>{metrics.parks.totalBeneficiaries}</strong>

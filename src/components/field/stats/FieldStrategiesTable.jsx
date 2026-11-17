@@ -13,10 +13,7 @@ import {
   Chip,
   useTheme
 } from '@mui/material';
-import {
-  getActivityTypeLabel,
-  getActivitySubtypeLabel
-} from '../../dashboard/common/helpers';
+import { getActivityTypeLabel } from '../../dashboard/common/helpers';
 
 const FieldStrategiesTable = ({ strategiesData, userContractor }) => {
   const theme = useTheme();

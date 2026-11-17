@@ -1,0 +1,141 @@
+rules_version = '2';
+
+// Reglas de seguridad de Firestore - SEPAM / Centros de Vida
+//
+// Roles (campo `role` del documento users/{uid}):
+//   district          → Distrito: lee todo, administra usuarios, sedes y metas.
+//   contractor-admin  → Representante/administrador del contratista: su equipo y sus actividades.
+//                       adminType 'main' (o sin adminType) = representante principal.
+//   field             → Personal de campo: registra y consulta sus actividades.
+// Un usuario con active == false no puede leer ni escribir nada.
+//
+// Desplegar con:  firebase deploy --only firestore:rules,firestore:indexes
+// o copiando este archivo en Firebase Console → Firestore → Reglas.
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function profilePath() {
+      return /databases/$(database)/documents/users/$(request.auth.uid);
+    }
+
+    function me() {
+      return get(profilePath()).data;
+    }
+
+    function isActive() {
+      return signedIn() && exists(profilePath()) && me().get('active', true) != false;
+    }
+
+    function isDistrict() {
+      return isActive() && me().role == 'district';
+    }
+
+    function isContractorAdmin() {
+      return isActive() && me().role == 'contractor-admin';
+    }
+
+    function isMainContractorAdmin() {
+      return isContractorAdmin() && me().get('adminType', 'main') == 'main';
+    }
+
+    function myContractor() {
+      return me().contractor;
+    }
+
+    function unchanged(field) {
+      return request.resource.data.get(field, null) == resource.data.get(field, null);
+    }
+
+    // ---------------------------------------------------------------- users
+    match /users/{uid} {
+      allow read: if (signedIn() && request.auth.uid == uid)
+        || isDistrict()
+        || (isContractorAdmin() && resource.data.contractor == myContractor());
+
+      // Solo un administrador crea perfiles (la cuenta de Auth se crea aparte).
+      // Un contratista solo crea personal de campo o administradores secundarios de su contratista.
+      allow create: if isDistrict()
+        || (isContractorAdmin()
+            && request.resource.data.contractor == myContractor()
+            && request.resource.data.role in ['field', 'contractor-admin']
+            && request.resource.data.get('adminType', 'secondary') != 'main');
+
+      allow update: if isDistrict()
+        // Representante principal: edita su equipo sin cambiar de contratista ni crear principales
+        || (isMainContractorAdmin()
+            && resource.data.contractor == myContractor()
+            && unchanged('contractor')
+            && unchanged('uid')
+            && unchanged('email')
+            && request.resource.data.role in ['field', 'contractor-admin']
+            && (unchanged('adminType') || request.resource.data.get('adminType', 'secondary') != 'main'))
+        // Cada usuario: solo sus datos de perfil
+        || (signedIn() && request.auth.uid == uid
+            && request.resource.data.diff(resource.data).affectedKeys()
+                 .hasOnly(['name', 'displayName', 'photoURL', 'updatedAt']));
+
+      allow delete: if isDistrict();
+    }
+
+    // ----------------------------------------------------------- activities
+    match /activities/{activityId} {
+      allow read: if isDistrict()
+        || (isActive() && resource.data.createdBy.uid == request.auth.uid)
+        || (isContractorAdmin() && resource.data.contractor == myContractor())
+        // Personal de campo: actividades aprobadas de su contratista (comparativos)
+        || (isActive() && resource.data.contractor == myContractor() && resource.data.status == 'approved');
+
+      // Toda actividad nace pendiente, a nombre de quien la registra y de su contratista
+      allow create: if isActive()
+        && request.resource.data.createdBy.uid == request.auth.uid
+        && request.resource.data.status == 'pending'
+        && (isDistrict() || request.resource.data.contractor == myContractor());
+
+      allow update: if isDistrict()
+        // Aprobar / rechazar una actividad pendiente de su contratista
+        || (isContractorAdmin()
+            && resource.data.contractor == myContractor()
+            && resource.data.status == 'pending'
+            && request.resource.data.status in ['approved', 'rejected']
+            && request.resource.data.diff(resource.data).affectedKeys()
+                 .hasOnly(['status', 'approvedBy', 'approvedAt', 'rejectionReason']))
+        // Autor: corregir una actividad rechazada y devolverla a revisión
+        || (isActive()
+            && resource.data.createdBy.uid == request.auth.uid
+            && resource.data.status == 'rejected'
+            && request.resource.data.status == 'pending'
+            && unchanged('createdBy')
+            && unchanged('contractor')
+            && unchanged('createdAt'));
+
+      // El autor puede borrar mientras esté pendiente
+      allow delete: if isDistrict()
+        || (isActive() && resource.data.createdBy.uid == request.auth.uid && resource.data.status == 'pending');
+    }
+
+    // ------------------------------------------------------------ locations
+    match /locations/{locationId} {
+      allow read: if isDistrict()
+        || (isActive() && resource.data.contractor == myContractor());
+      allow write: if isDistrict();
+    }
+
+    // ---------------------------------------------------------------- goals
+    // Id del documento: {contractor}_{year}
+    match /goals/{goalId} {
+      allow read: if isDistrict()
+        || (isActive() && (resource == null || resource.data.contractor == myContractor()));
+      allow write: if isDistrict();
+    }
+
+    // Todo lo demás: denegado
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

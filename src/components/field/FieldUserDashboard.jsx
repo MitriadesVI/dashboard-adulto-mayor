@@ -31,6 +31,7 @@ import {
   generateInsights,
   fetchUserActivitiesForPeriodAndComparison, 
   getDateRangeForPeriod, 
+  filterByDateRange,
 } from './utils/fieldHelpers';
 
 // Componentes del dashboard de campo
@@ -60,6 +61,8 @@ const FieldUserDashboard = ({ user }) => {
   const [strategiesStats, setStrategiesStats] = useState([]);
   const [modalityStats, setModalityStats] = useState([]);
   const [activeStreak, setActiveStreak] = useState(0);
+  const [pendingCount, setPendingCount] = useState(0);
+  const [rejectedCount, setRejectedCount] = useState(0);
   const [achievements, setAchievements] = useState([]);
   const [insights, setInsights] = useState([]);
 
@@ -88,11 +91,6 @@ const FieldUserDashboard = ({ user }) => {
       const userActivities = cacheRef.current.userActivities;
       const colleaguesActivities = cacheRef.current.colleaguesActivities;
 
-      if (userActivities.length === 0) {
-        setError("No hay datos de actividades cargados.");
-        return;
-      }
-
       const {
         currentPeriodActivities,
         previousPeriodActivities,
@@ -106,13 +104,14 @@ const FieldUserDashboard = ({ user }) => {
 
       setCurrentDateRange(dateRange);
       
-      // Filtrar actividades para exportación
-      const exportActivities = userActivities.filter(act => {
-        if (!act.date) return false;
-        const actDate = new Date(act.date);
-        return actDate >= dateRange.currentStartDate && actDate <= dateRange.currentEndDate;
-      });
-      setActivitiesForExport(exportActivities);
+      // Filtrar actividades para exportación (el botón excluye las rechazadas)
+      setActivitiesForExport(
+        filterByDateRange(userActivities, dateRange.currentStartDate, dateRange.currentEndDate)
+      );
+
+      // Las pendientes y rechazadas no cuentan en los KPIs ni en el ranking (solo aprobadas); se informan aparte
+      setPendingCount(userActivities.filter(act => act.status === 'pending').length);
+      setRejectedCount(userActivities.filter(act => act.status === 'rejected').length);
 
       // Calcular KPIs
       const kpis = calculateFieldUserKPIs(currentPeriodActivities);
@@ -121,7 +120,8 @@ const FieldUserDashboard = ({ user }) => {
       // Calcular estadísticas
       setStrategiesStats(getStatsByStrategy(currentPeriodActivities, userContractor));
       setModalityStats(getStatsByModality(currentPeriodActivities));
-      setActiveStreak(calculateActiveStreak(educationalActivitiesFullHistory));
+      // La racha cuenta los días en que se registraron actividades (aprobadas o pendientes, no rechazadas)
+      setActiveStreak(calculateActiveStreak(userActivities.filter(act => act.status !== 'rejected')));
       
       // Datos comparativos
       const comparativeData = getComparativeData(
@@ -170,7 +170,6 @@ const FieldUserDashboard = ({ user }) => {
     const cacheValid = lastLoad && (now - lastLoad) < 5 * 60 * 1000; // 5 minutos
     
     if (!forceReload && cacheValid && cacheRef.current.userActivities.length > 0) {
-      console.log('📊 Usando datos en caché...');
       await processDashboardData(selectedPeriod);
       return;
     }
@@ -179,8 +178,6 @@ const FieldUserDashboard = ({ user }) => {
     setError(null);
     
     try {
-      console.log('🔄 Cargando datos del servidor...');
-      
       // ========== CARGA OPTIMIZADA DE ACTIVIDADES DEL USUARIO ==========
       const userActivities = [];
       let lastDoc = null;
@@ -200,25 +197,23 @@ const FieldUserDashboard = ({ user }) => {
         pageCount++;
       }
       
-      console.log(`📊 Cargadas ${userActivities.length} actividades del usuario`);
-
       // ========== CARGA LIMITADA DE ACTIVIDADES COMPARATIVAS ==========
       const systemActivities = await activitiesService.getApprovedActivities({
         contractor: userContractor
       });
       
-      // Filtrar solo lo necesario para comparación (últimos 90 días)
-      const cutoffDate = new Date();
-      cutoffDate.setDate(cutoffDate.getDate() - 90);
+      // Filtrar solo lo necesario para comparación (el período más largo: últimos 90 días, en días locales)
+      const { startDate: comparisonStart, endDate: comparisonEnd } = getDateRangeForPeriod('90days');
       
-      const relevantActivities = systemActivities.filter(act => 
-        act.educationalActivity?.included === true &&
-        act.createdBy?.role === 'field' &&
-        act.date && new Date(act.date) >= cutoffDate
+      const relevantActivities = filterByDateRange(
+        systemActivities.filter(act => 
+          act.educationalActivity?.included === true &&
+          act.createdBy?.role === 'field'
+        ),
+        comparisonStart,
+        comparisonEnd
       );
       
-      console.log(`📊 Cargadas ${relevantActivities.length} actividades para comparación`);
-
       // Actualizar caché
       cacheRef.current = {
         userActivities,
@@ -242,8 +237,8 @@ const FieldUserDashboard = ({ user }) => {
     const newPeriod = event.target.value;
     setPeriod(newPeriod);
     
-    // Si hay datos, re-procesar inmediatamente
-    if (dataLoaded && cacheRef.current.userActivities.length > 0) {
+    // Si ya se cargaron los datos, re-procesar inmediatamente
+    if (dataLoaded) {
       processDashboardData(newPeriod);
     }
   }, [dataLoaded, processDashboardData]);
@@ -352,6 +347,17 @@ const FieldUserDashboard = ({ user }) => {
       {/* Dashboard content */}
       {dataLoaded && !loading && (
         <Grid container spacing={3}>
+          {/* Aviso: las estadísticas solo cuentan actividades aprobadas */}
+          {(pendingCount > 0 || rejectedCount > 0) && (
+            <Grid item xs={12}>
+              <Alert severity="info">
+                Tus estadísticas solo cuentan las actividades aprobadas.
+                {pendingCount > 0 && ` Tienes ${pendingCount} ${pendingCount === 1 ? 'actividad pendiente' : 'actividades pendientes'} de aprobación.`}
+                {rejectedCount > 0 && ` Tienes ${rejectedCount} ${rejectedCount === 1 ? 'actividad rechazada' : 'actividades rechazadas'} por corregir.`}
+              </Alert>
+            </Grid>
+          )}
+
           {/* KPIs */}
           <Grid item xs={12}>
             <FieldKPICards kpiData={kpiData} />

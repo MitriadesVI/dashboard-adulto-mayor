@@ -6,27 +6,21 @@ import {
   ResponsiveContainer, BarChart, Bar, CartesianGrid, 
   XAxis, YAxis, Tooltip, Legend, ReferenceLine 
 } from 'recharts';
+import { getActivityTypeLabel } from '../common/helpers';
+import { getContractorName } from '../../../config/contractors';
 
 const DetailedGoalsChart = ({ goals, contractor, title = "Progreso Detallado por Estrategia" }) => {
   
   const prepareProgressChartData = () => {
     if (!goals || !goals.progress || !goals.counts || !goals.goals) {
-      console.log('Datos incompletos para DetailedGoalsChart:', goals);
       return [];
     }
     
     const progressData = [];
     const { progress, counts, goals: targets } = goals;
     
-    // Función para obtener nombres de acción
-    const getActionName = (type) => {
-      const actionNames = {
-        nutrition: contractor === 'CUC' ? 'Educación Nutricional' : 'Salud Nutricional',
-        physical: contractor === 'CUC' ? 'Educación en Salud Física' : 'Salud Física', 
-        psychosocial: contractor === 'CUC' ? 'Educación Psicosocial' : 'Salud Psicosocial'
-      };
-      return actionNames[type] || type;
-    };
+    // Nombre de la acción según el estilo de etiquetas del contratista (config/contractors)
+    const getActionName = (type) => getActivityTypeLabel(type, contractor);
 
     // Función para obtener color según rendimiento
     const getColorByPercentage = (percentage) => {
@@ -104,7 +98,6 @@ const DetailedGoalsChart = ({ goals, contractor, title = "Progreso Detallado por
       });
     }
     
-    console.log('Datos preparados para DetailedGoalsChart:', progressData);
     return progressData;
   };
 
@@ -165,7 +158,7 @@ const DetailedGoalsChart = ({ goals, contractor, title = "Progreso Detallado por
     <Card>
       <CardHeader 
         title={title}
-        subheader={`${contractor} - Solo estrategias con metas específicas`}
+        subheader={`${getContractorName(contractor)} - Solo estrategias con metas específicas`}
       />
       <CardContent>
         <ResponsiveContainer width="100%" height={Math.max(400, data.length * 40)}>

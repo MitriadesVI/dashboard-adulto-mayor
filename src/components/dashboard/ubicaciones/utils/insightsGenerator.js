@@ -1,12 +1,16 @@
+import { getLocationType } from '../../common/helpers';
+import { parseActivityDate } from '../../../../utils/dates';
+
 export const generateInsights = (analysisData, selectedLocationInfo, locationActivities) => {
   const insights = [];
   const summary = analysisData.summary;
   const components = analysisData.components;
   const weaknesses = analysisData.weaknesses;
   const dayGroups = analysisData.rawGroups;
+  const isCenter = getLocationType(selectedLocationInfo) === 'center';
   
   // 1. INSIGHTS DE RENDIMIENTO Y CAPACIDAD
-  if (selectedLocationInfo?.type?.toLowerCase() === 'center' && summary.capacity > 0) {
+  if (isCenter && summary.capacity > 0) {
     if (summary.utilizationRate >= 85) {
       insights.push({
         type: 'success',
@@ -32,7 +36,7 @@ export const generateInsights = (analysisData, selectedLocationInfo, locationAct
   }
 
   // 2. INSIGHTS DE JORNADAS (solo para centros)
-  if (selectedLocationInfo?.type?.toLowerCase() === 'center' && summary.avgJ1 > 0 && summary.avgJ2 > 0) {
+  if (isCenter && summary.avgJ1 > 0 && summary.avgJ2 > 0) {
     const j1vsJ2Diff = ((summary.avgJ1 - summary.avgJ2) / summary.avgJ2) * 100;
     if (Math.abs(j1vsJ2Diff) > 20) {
       const betterSession = j1vsJ2Diff > 0 ? 'J1 (mañana)' : 'J2 (tarde)';
@@ -103,7 +107,9 @@ export const generateInsights = (analysisData, selectedLocationInfo, locationAct
     // Análisis de días de la semana
     const dayOfWeekStats = {};
     dayGroups.forEach(group => {
-      const date = new Date(group.date);
+      // group.date es 'YYYY-MM-DD': se interpreta en hora local (new Date() lo tomaría como UTC)
+      const date = parseActivityDate(group.date);
+      if (!date) return;
       const dayName = ['Domingo', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado'][date.getDay()];
       if (!dayOfWeekStats[dayName]) {
         dayOfWeekStats[dayName] = { count: 0, totalAttendance: 0 };
@@ -123,7 +129,7 @@ export const generateInsights = (analysisData, selectedLocationInfo, locationAct
       const bestDay = dayStats[0];
       const worstDay = dayStats[dayStats.length - 1];
       
-      if (bestDay.sessions >= 2 && worstDay.sessions >= 2) {
+      if (bestDay.sessions >= 2 && worstDay.sessions >= 2 && worstDay.average > 0) {
         const improvement = ((bestDay.average - worstDay.average) / worstDay.average * 100).toFixed(0);
         if (improvement > 25) {
           insights.push({
@@ -138,14 +144,14 @@ export const generateInsights = (analysisData, selectedLocationInfo, locationAct
 
     // Análisis de tendencia temporal
     if (dayGroups.length >= 6) {
-      const sortedGroups = [...dayGroups].sort((a, b) => new Date(a.date) - new Date(b.date));
+      const sortedGroups = [...dayGroups].sort((a, b) => a.date.localeCompare(b.date));
       const firstHalf = sortedGroups.slice(0, Math.floor(sortedGroups.length / 2));
       const secondHalf = sortedGroups.slice(Math.floor(sortedGroups.length / 2));
       
       const firstHalfAvg = firstHalf.reduce((sum, g) => sum + g.maxBeneficiaries, 0) / firstHalf.length;
       const secondHalfAvg = secondHalf.reduce((sum, g) => sum + g.maxBeneficiaries, 0) / secondHalf.length;
       
-      const trendPercentage = ((secondHalfAvg - firstHalfAvg) / firstHalfAvg * 100);
+      const trendPercentage = firstHalfAvg > 0 ? ((secondHalfAvg - firstHalfAvg) / firstHalfAvg * 100) : 0;
       
       if (trendPercentage > 15) {
         insights.push({
@@ -173,7 +179,7 @@ export const generateInsights = (analysisData, selectedLocationInfo, locationAct
       const mixedAvg = mixedSessions.reduce((sum, g) => sum + g.maxBeneficiaries, 0) / mixedSessions.length;
       const otherAvg = [...educationalOnly, ...nutritionOnly].reduce((sum, g) => sum + g.maxBeneficiaries, 0) / (educationalOnly.length + nutritionOnly.length);
       
-      if (mixedAvg > otherAvg * 1.1) {
+      if (otherAvg > 0 && mixedAvg > otherAvg * 1.1) {
         const improvement = ((mixedAvg - otherAvg) / otherAvg * 100).toFixed(0);
         insights.push({
           type: 'success',
@@ -185,10 +191,11 @@ export const generateInsights = (analysisData, selectedLocationInfo, locationAct
     }
 
     // 6. INSIGHTS DE PRODUCTIVIDAD
-    const weeksInPeriod = Math.max(1, Math.ceil(summary.uniqueServiceDays / 7));
+    // Semanas reales del período evaluado (de la primera sesión al fin de la ventana de análisis), mínimo 1
+    const weeksInPeriod = Math.max(1, (weaknesses.metrics?.totalDaysInPeriod || 0) / 7);
     const sessionsPerWeek = summary.serviceSessions / weeksInPeriod;
     
-    if (selectedLocationInfo?.type?.toLowerCase() === 'center') {
+    if (isCenter) {
       if (sessionsPerWeek > 8) {
         insights.push({
           type: 'success',

@@ -25,7 +25,7 @@ const FieldKPICards = ({ kpiData }) => {
           value={totalEducationalActivities !== undefined ? totalEducationalActivities : 'N/A'}
           icon={<EventNoteIcon sx={{ fontSize: 40 }} />}
           color="primary"
-          subtitle="En el período seleccionado"
+          subtitle="Aprobadas en el período seleccionado"
         />
       </Grid>
 
@@ -41,11 +41,11 @@ const FieldKPICards = ({ kpiData }) => {
 
       <Grid item xs={12} sm={6} md={4}>
         <DashboardCard
-          title="Promedio Beneficiarios / Actividad"
+          title="Promedio Beneficiarios / Jornada"
           value={avgBeneficiariesPerActivity !== undefined ? avgBeneficiariesPerActivity : 'N/A'}
           icon={<BarChartIcon sx={{ fontSize: 40 }} />}
           color="warning"
-          subtitle="Para actividades educativas"
+          subtitle="Por ubicación, día y jornada"
         />
       </Grid>
     </Grid>

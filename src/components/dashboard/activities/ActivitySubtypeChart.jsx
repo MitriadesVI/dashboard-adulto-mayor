@@ -53,8 +53,6 @@ const ActivitySubtypeChart = ({ activities, title = "Actividades por Subtipo" })
       */
     });
     
-    console.log("Conteos por subtipo:", counts); // Debug
-    
     return Object.entries(counts).map(([name, value], index) => ({ 
       name, 
       value,
@@ -63,7 +61,6 @@ const ActivitySubtypeChart = ({ activities, title = "Actividades por Subtipo" })
   };
 
   const data = getActivityCountsBySubtype();
-  console.log("Datos para mostrar en tarjetas:", data); // Debug
 
   return (
     <Card>

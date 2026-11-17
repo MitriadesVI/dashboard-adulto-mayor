@@ -4,89 +4,53 @@ import {
   signInWithEmailAndPassword, 
   signOut, 
   createUserWithEmailAndPassword,
+  deleteUser,
+  onAuthStateChanged,
   sendPasswordResetEmail,
   updatePassword,
   reauthenticateWithCredential,
   EmailAuthProvider
 } from 'firebase/auth';
 import { doc, setDoc, getDoc, serverTimestamp, updateDoc } from 'firebase/firestore';
-import { auth, db } from '../firebase/config';
+import { auth, db, getSecondaryAuth } from '../firebase/config';
+
+const appError = (code, message) => {
+  const error = new Error(message);
+  error.code = code;
+  return error;
+};
+
+// Lee el perfil de Firestore del usuario autenticado. Lanza un error con código
+// 'app/no-profile' o 'app/user-disabled' si no puede usar la aplicación.
+const loadProfile = async (firebaseUser) => {
+  const userDoc = await getDoc(doc(db, 'users', firebaseUser.uid));
+  if (!userDoc.exists()) {
+    throw appError('app/no-profile', 'Su usuario no tiene un perfil asignado. Contacte al administrador.');
+  }
+  const profile = { uid: firebaseUser.uid, email: firebaseUser.email, ...userDoc.data() };
+  if (profile.active === false) {
+    throw appError('app/user-disabled', 'Su cuenta está desactivada. Contacte al administrador.');
+  }
+  return profile;
+};
 
 const authService = {
   // ... (mantener todas las funciones existentes)
   
-  // Iniciar sesión - CORREGIDO TEMPORALMENTE
+  // Iniciar sesión. Solo entran usuarios con perfil en Firestore y activos.
   login: async (email, password) => {
     try {
       const userCredential = await signInWithEmailAndPassword(auth, email, password);
-      const user = userCredential.user;
-      
-      // ❌ COMENTADO TEMPORALMENTE - ESTA LÍNEA CAUSA EL PROBLEMA
-      // try {
-      //   await setDoc(doc(db, 'users', user.uid), {
-      //     lastLogin: serverTimestamp()
-      //   }, { merge: true });
-      // } catch (updateError) {
-      //   console.warn('Error al actualizar lastLogin (no crítico):', updateError);
-      // }
-      
       try {
-        const userDoc = await getDoc(doc(db, 'users', user.uid));
-        
-        if (userDoc.exists()) {
-          const userData = {
-            uid: user.uid,
-            email: user.email,
-            ...userDoc.data()
-          };
-          console.log("✅ Usuario logueado exitosamente:", userData.email, "Rol:", userData.role);
-          return userData;
-        } else {
-          console.warn('Usuario autenticado pero sin documento en Firestore (login)');
-          const basicUserData = {
-            uid: user.uid,
-            email: user.email,
-            name: user.email.split('@')[0],
-            role: 'field', 
-            contractor: 'PENDIENTE',
-            active: true,
-            createdAt: serverTimestamp() 
-          };
-          
-          try {
-            await setDoc(doc(db, 'users', user.uid), basicUserData);
-            const createdDoc = await getDoc(doc(db, 'users', user.uid)); 
-             if (createdDoc.exists()) {
-                return {
-                    uid: user.uid,
-                    email: user.email,
-                    ...createdDoc.data()
-                };
-            }
-            const returnData = { ...basicUserData };
-            delete returnData.createdAt;
-            console.log("✅ Usuario creado y logueado:", returnData.email);
-            return returnData;
-
-          } catch (setDocError) {
-            console.error('Error al crear documento de usuario básico en Firestore (login):', setDocError);
-            const returnData = { ...basicUserData };
-            delete returnData.createdAt;
-            return returnData;
-          }
-        }
-      } catch (userDocError) {
-        console.error('Error al obtener/crear datos de usuario en Firestore (login):', userDocError);
-        return {
-          uid: user.uid,
-          email: user.email,
-          name: user.email.split('@')[0],
-          role: 'field',
-          contractor: 'PENDIENTE'
-        };
+        const profile = await loadProfile(userCredential.user);
+        console.log("✅ Usuario logueado exitosamente:", profile.email, "Rol:", profile.role);
+        return profile;
+      } catch (profileError) {
+        await signOut(auth).catch(() => {});
+        throw profileError;
       }
     } catch (error) {
-      console.error('❌ Error en inicio de sesión (Firebase Auth):', error.code, error.message);
+      console.error('❌ Error en inicio de sesión:', error.code, error.message);
       throw error;
     }
   },
@@ -102,42 +66,51 @@ const authService = {
     }
   },
   
+  // Crea la cuenta de otro usuario sin cerrar la sesión del administrador:
+  // la cuenta se crea en una instancia secundaria de Auth y el perfil lo escribe
+  // el administrador (las reglas de Firestore solo permiten que un admin cree perfiles).
   registerUser: async (email, password, userData) => {
+    const secondaryAuth = await getSecondaryAuth();
+    let createdUser = null;
     try {
-      const userCredential = await createUserWithEmailAndPassword(auth, email, password);
-      const user = userCredential.user;
-      
-      const userProfileDataToSave = { ...userData };
+      const userCredential = await createUserWithEmailAndPassword(secondaryAuth, email, password);
+      createdUser = userCredential.user;
 
+      const userProfileDataToSave = { ...userData };
       if (userProfileDataToSave.role === 'contractor-admin' && !userProfileDataToSave.adminType) {
         userProfileDataToSave.adminType = 'secondary';
-        console.log(`Asignado adminType='secondary' por defecto para contractor-admin: ${email}`);
       }
-      
+
       try {
-        await setDoc(doc(db, 'users', user.uid), {
-          uid: user.uid,
-          email: user.email,
+        await setDoc(doc(db, 'users', createdUser.uid), {
+          uid: createdUser.uid,
+          email: createdUser.email,
           ...userProfileDataToSave,
           createdAt: serverTimestamp(),
-          // ❌ COMENTADO TEMPORALMENTE
-          // lastLogin: serverTimestamp()
+          createdBy: auth.currentUser ? auth.currentUser.uid : null
         });
-        console.log("✅ Datos de usuario guardados en Firestore para:", email);
       } catch (firestoreError) {
-        console.error('❌ Error al guardar datos en Firestore para el nuevo usuario:', email, firestoreError);
+        // Sin perfil la cuenta no sirve: se elimina para poder reintentar con el mismo correo
+        await deleteUser(createdUser).catch(() => {});
+        throw appError('app/profile-write-failed', 'No se pudo guardar el perfil del usuario (permisos insuficientes o sin conexión).');
       }
-      
-      const returnData = { 
-        uid: user.uid,
-        email: user.email,
-        ...userProfileDataToSave
-       };
-      return returnData;
 
+      console.log("✅ Usuario creado:", email);
+      return { uid: createdUser.uid, email: createdUser.email, ...userProfileDataToSave };
     } catch (error) {
-      console.error('❌ Error al registrar usuario (Firebase Auth):', error.code, error.message);
+      console.error('❌ Error al registrar usuario:', error.code, error.message);
+      if (error.code === 'auth/email-already-in-use') {
+        throw appError(error.code, 'Ya existe una cuenta con ese correo electrónico.');
+      }
+      if (error.code === 'auth/weak-password') {
+        throw appError(error.code, 'La contraseña debe tener al menos 6 caracteres.');
+      }
+      if (error.code === 'auth/invalid-email') {
+        throw appError(error.code, 'El correo electrónico no es válido.');
+      }
       throw error;
+    } finally {
+      await signOut(secondaryAuth).catch(() => {});
     }
   },
   
@@ -279,63 +252,50 @@ const authService = {
     }
   },
   
+  // Resuelve el perfil del usuario con sesión activa, o null si no hay sesión
+  // (o si el usuario no tiene perfil o está desactivado; en ese caso cierra la sesión).
+  // Rechaza si no se pudo verificar (sin conexión, timeout): quien llama decide
+  // si mantiene el usuario guardado localmente.
   getCurrentUser: () => {
     return new Promise((resolve, reject) => {
-      let timeoutId = setTimeout(() => {
-        console.warn("⏰ getCurrentUser: Timeout después de 8 segundos.");
-        resolve(null); 
+      let settled = false;
+      let unsubscribe = () => {};
+
+      const timeoutId = setTimeout(() => {
+        if (settled) return;
+        settled = true;
+        unsubscribe();
+        reject(appError('app/timeout', 'No se pudo verificar la sesión (tiempo agotado).'));
       }, 8000);
-      
-      const currentUser = auth.currentUser;
-      if (currentUser) {
+
+      unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
+        if (settled) return;
+        settled = true;
         clearTimeout(timeoutId);
-        console.log("✅ getCurrentUser: Usuario desde auth.currentUser:", currentUser.email);
-        getDoc(doc(db, 'users', currentUser.uid))
-          .then(userDoc => {
-            if (userDoc.exists()) {
-              const userData = { uid: currentUser.uid, email: currentUser.email, ...userDoc.data() };
-              console.log("✅ getCurrentUser: Datos obtenidos de Firestore:", userData.role);
-              resolve(userData);
-            } else {
-              console.warn('⚠️ getCurrentUser: auth.currentUser existe pero sin doc en Firestore:', currentUser.email);
-              resolve({ uid: currentUser.uid, email: currentUser.email, name: currentUser.email.split('@')[0], role: 'field', contractor: 'PENDIENTE', active: true });
-            }
-          })
-          .catch(error => {
-            console.error('❌ getCurrentUser: Error Firestore (auth.currentUser):', error);
-            resolve({ uid: currentUser.uid, email: currentUser.email, name: currentUser.email.split('@')[0], role: 'field', contractor: 'PENDIENTE', active: true });
-          });
-        return;
-      }
-      
-      const unsubscribe = auth.onAuthStateChanged(async (userAuth) => {
-        clearTimeout(timeoutId); 
-        unsubscribe(); 
-        if (userAuth) {
-          console.log("✅ getCurrentUser: Usuario desde onAuthStateChanged:", userAuth.email);
-          try {
-            const userDoc = await getDoc(doc(db, 'users', userAuth.uid));
-            if (userDoc.exists()) {
-              const userData = { uid: userAuth.uid, email: userAuth.email, ...userDoc.data() };
-              console.log("✅ getCurrentUser: Datos obtenidos (onAuthStateChanged):", userData.role);
-              resolve(userData);
-            } else {
-              console.warn('⚠️ getCurrentUser: onAuthStateChanged dio user pero sin doc en Firestore:', userAuth.email);
-              resolve({ uid: userAuth.uid, email: userAuth.email, name: userAuth.email.split('@')[0], role: 'field', contractor: 'PENDIENTE', active: true });
-            }
-          } catch (error) {
-            console.error('❌ getCurrentUser: Error Firestore (onAuthStateChanged):', error);
-            resolve({ uid: userAuth.uid, email: userAuth.email, name: userAuth.email.split('@')[0], role: 'field', contractor: 'PENDIENTE', active: true });
-          }
-        } else {
-          console.log("ℹ️ getCurrentUser: No hay usuario (onAuthStateChanged).");
+        unsubscribe();
+
+        if (!firebaseUser) {
           resolve(null);
+          return;
         }
-      }, (error) => { 
+
+        try {
+          resolve(await loadProfile(firebaseUser));
+        } catch (error) {
+          if (error.code === 'app/no-profile' || error.code === 'app/user-disabled') {
+            console.warn('⚠️ getCurrentUser:', error.message);
+            await signOut(auth).catch(() => {});
+            resolve(null);
+          } else {
+            reject(error);
+          }
+        }
+      }, (error) => {
+        if (settled) return;
+        settled = true;
         clearTimeout(timeoutId);
-        unsubscribe(); 
-        console.error("❌ getCurrentUser: Error en listener onAuthStateChanged:", error);
-        resolve(null); 
+        unsubscribe();
+        reject(error);
       });
     });
   },

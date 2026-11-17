@@ -30,6 +30,7 @@ import {
   Save as SaveIcon
 } from '@mui/icons-material';
 import authService from '../../services/authService';
+import { getContractorName } from '../../config/contractors';
 
 const ProfilePanel = ({ user, onUserUpdate }) => {
   // Estados para cambio de contraseña
@@ -255,7 +256,7 @@ const ProfilePanel = ({ user, onUserUpdate }) => {
               />
               {user.contractor && (
                 <Chip 
-                  label={user.contractor}
+                  label={getContractorName(user.contractor)}
                   variant="outlined"
                   size="small"
                 />
@@ -277,7 +278,7 @@ const ProfilePanel = ({ user, onUserUpdate }) => {
               <Box sx={{ display: 'flex', alignItems: 'center', mb: 1 }}>
                 <BusinessIcon sx={{ mr: 1, color: 'text.secondary' }} />
                 <Typography variant="body2">
-                  <strong>Contratista:</strong> {user.contractor || 'No asignado'}
+                  <strong>Contratista:</strong> {getContractorName(user.contractor) || 'No asignado'}
                 </Typography>
               </Box>
             </Grid>

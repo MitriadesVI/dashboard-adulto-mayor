@@ -1,7 +1,10 @@
 import React from 'react';
 import { Grid, Paper, Typography } from '@mui/material';
+import { getLocationType } from '../../common/helpers';
 
 const LocationMetricsPanel = ({ summary, selectedLocationInfo }) => {
+  const isCenter = getLocationType(selectedLocationInfo) === 'center';
+
   return (
     <Grid container spacing={2} sx={{ mb: 3 }}>
       <Grid item xs={6} sm={4} md={2}>
@@ -37,7 +40,7 @@ const LocationMetricsPanel = ({ summary, selectedLocationInfo }) => {
           </Paper>
         </Grid>
       )}
-      {selectedLocationInfo?.type?.toLowerCase() === 'center' && summary.avgJ1 > 0 && (
+      {isCenter && summary.avgJ1 > 0 && (
         <Grid item xs={6} sm={4} md={2}>
           <Paper sx={{ p: 2, textAlign: 'center', bgcolor: 'secondary.light', color: 'text.primary' }}>
             <Typography variant="h4">{summary.avgJ1}</Typography>
@@ -45,7 +48,7 @@ const LocationMetricsPanel = ({ summary, selectedLocationInfo }) => {
           </Paper>
         </Grid>
       )}
-      {selectedLocationInfo?.type?.toLowerCase() === 'center' && summary.avgJ2 > 0 && (
+      {isCenter && summary.avgJ2 > 0 && (
         <Grid item xs={6} sm={4} md={2}>
           <Paper sx={{ p: 2, textAlign: 'center', bgcolor: 'secondary.light', color: 'text.primary' }}>
             <Typography variant="h4">{summary.avgJ2}</Typography>

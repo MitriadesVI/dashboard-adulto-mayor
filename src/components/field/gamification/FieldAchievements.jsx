@@ -1,14 +1,9 @@
 // src/components/field/gamification/FieldAchievements.jsx
 import React from 'react';
 import {
-  Box,
   Grid,
   Paper,
   Typography,
-  List,
-  ListItem,
-  ListItemIcon,
-  ListItemText,
   Tooltip as MuiTooltip, // Renombrar para evitar conflicto con Recharts si se usa
   Chip,
   useTheme

@@ -9,20 +9,19 @@ import {
 import TrendingUpIcon from '@mui/icons-material/TrendingUp';
 import TrendingDownIcon from '@mui/icons-material/TrendingDown';
 import AssessmentIcon from '@mui/icons-material/Assessment';
+import { getActivityTypeLabel } from '../common/helpers';
+import { getContractorName } from '../../../config/contractors';
 
 const GoalsSummary = ({ goals, contractor, title }) => {
   // Preparar datos para el gráfico
   const prepareAverageProgressChartData = () => {
     if (!goals || !goals.averages) return [];
     
-    const getActionName = (type) => {
-      const actionNames = {
-        nutrition: contractor === 'CUC' ? 'Educación Nutricional' : 'Salud Nutricional',
-        physical: contractor === 'CUC' ? 'Educación en Salud Física' : 'Salud Física', 
-        psychosocial: contractor === 'CUC' ? 'Educación Psicosocial' : 'Salud Psicosocial'
-      };
-      return actionNames[type] || type;
-    };
+    // Nombre de la acción según el estilo de etiquetas del contratista (config/contractors)
+    const getActionName = (type) => getActivityTypeLabel(type, contractor);
+
+    // Solo se muestran los componentes que tienen al menos una estrategia con meta
+    const hasGoals = (type) => Object.values(goals.goals?.[type] || {}).some(value => value > 0);
 
     const getColorByPercentage = (percentage) => {
       if (percentage >= 75) return '#4CAF50'; // Verde
@@ -31,30 +30,18 @@ const GoalsSummary = ({ goals, contractor, title }) => {
       return '#F44336'; // Rojo
     };
 
-    return [
-      { 
-        name: getActionName('nutrition'), 
-        value: Math.min(100, Math.round(goals.averages.nutrition * 100) / 100), 
-        fill: getColorByPercentage(goals.averages.nutrition),
-        type: 'nutrition'
-      },
-      { 
-        name: getActionName('physical'), 
-        value: Math.min(100, Math.round(goals.averages.physical * 100) / 100), 
-        fill: getColorByPercentage(goals.averages.physical),
-        type: 'physical'
-      },
-      { 
-        name: getActionName('psychosocial'), 
-        value: Math.min(100, Math.round(goals.averages.psychosocial * 100) / 100), 
-        fill: getColorByPercentage(goals.averages.psychosocial),
-        type: 'psychosocial'
-      }
-    ];
+    return ['nutrition', 'physical', 'psychosocial']
+      .filter(hasGoals)
+      .map(type => ({
+        name: getActionName(type),
+        value: Math.min(100, Math.round(goals.averages[type] * 100) / 100),
+        fill: getColorByPercentage(goals.averages[type]),
+        type
+      }));
   };
 
   const data = prepareAverageProgressChartData();
-  const displayTitle = title || `Resumen por Acción - ${contractor}`;
+  const displayTitle = title || `Resumen por Acción - ${getContractorName(contractor)}`;
   
   // Calcular métricas generales
   const overallAverage = data.length > 0 ? 
